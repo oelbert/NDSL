@@ -161,7 +161,7 @@ def test_sequential_savepoint(
             f"No translate object available for savepoint {case.savepoint_name}."
         )
     stencil_config = StencilConfig(
-        compilation_config=CompilationConfig(backend=backend),
+        compilation_config=CompilationConfig(backend=backend, validate_args=False),
         dace_config=DaceConfig(
             communicator=None,
             backend=backend,
@@ -328,7 +328,7 @@ def test_parallel_savepoint(
             f"no translate object available for savepoint {case.savepoint_name}"
         )
     stencil_config = StencilConfig(
-        compilation_config=CompilationConfig(backend=backend),
+        compilation_config=CompilationConfig(backend=backend, validate_args=False),
         dace_config=DaceConfig(
             communicator=communicator,
             backend=backend,

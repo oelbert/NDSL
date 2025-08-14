@@ -231,7 +231,7 @@ def get_namelist(namelist_filename):
 def get_config(backend: str, communicator: Optional[Communicator]):
     stencil_config = StencilConfig(
         compilation_config=CompilationConfig(
-            backend=backend, rebuild=False, validate_args=True
+            backend=backend, rebuild=False, validate_args=False
         ),
         dace_config=DaceConfig(
             communicator=communicator,
