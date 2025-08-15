@@ -69,21 +69,27 @@ class LegacyMetric(BaseMetric):
         ignore_near_zero_errors,
         near_zero,
     ) -> npt.NDArray[np.bool_]:
+        if len(self.references.shape) == len(self.computed.shape) + 1:
+            if self.references.shape[-1] == 1:
+                computed = self.computed.reshape(self.references.shape)
+        else:
+            computed = self.computed
+
         if self.references.dtype in (np.float64, np.int64, np.float32, np.int32):
             denom = self.references
-            denom[self.references == 0] = self.computed[self.references == 0]
+            denom[self.references == 0] = computed[self.references == 0]
             self._calculated_metric = np.asarray(
-                np.abs((self.computed - self.references) / denom)
+                np.abs((computed - self.references) / denom)
             )
             self._calculated_metric[denom == 0] = 0.0
         elif self.references.dtype in (np.bool_, bool):
-            self._calculated_metric = np.logical_xor(self.computed, self.references)
+            self._calculated_metric = np.logical_xor(computed, self.references)
         else:
             raise TypeError(
                 f"received data with unexpected dtype {self.references.dtype}"
             )
         success = np.logical_or(
-            np.logical_and(np.isnan(self.computed), np.isnan(self.references)),
+            np.logical_and(np.isnan(computed), np.isnan(self.references)),
             self._calculated_metric < self.eps,
         )
         if isinstance(ignore_near_zero_errors, dict):
@@ -92,7 +98,7 @@ class LegacyMetric(BaseMetric):
                 success = np.logical_or(
                     success,
                     np.logical_and(
-                        np.abs(self.computed) < near_zero,
+                        np.abs(computed) < near_zero,
                         np.abs(self.references) < near_zero,
                     ),
                 )
@@ -100,7 +106,7 @@ class LegacyMetric(BaseMetric):
             success = np.logical_or(
                 success,
                 np.logical_and(
-                    np.abs(self.computed) < near_zero,
+                    np.abs(computed) < near_zero,
                     np.abs(self.references) < near_zero,
                 ),
             )
