@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Annotated
 
-from mpi4py import MPI
+from ndsl.comm.mpi import MPI
 
 
 # Python log levels are hierarchical, therefore setting INFO
@@ -19,15 +19,8 @@ AVAILABLE_LOG_LEVELS = {
 }
 
 
-def _get_log_level(default: str = "info"):
-    if os.getenv("PACE_LOGLEVEL", ""):
-        logging.warning("PACE_LOGLEVEL is deprecated. Use NDSL_LOGLEVEL instead.")
-        if os.getenv("NDSL_LOGLEVEL", ""):
-            logging.warning(
-                "PACE_LOGLEVEL and NDSL_LOGLEVEL were both specified. NDSL_LOGLEVEL will take precedence."
-            )
-
-    loglevel = os.getenv("NDSL_LOGLEVEL", os.getenv("PACE_LOGLEVEL", default)).lower()
+def _get_log_level(default: str = "info") -> str:
+    loglevel = os.getenv("NDSL_LOGLEVEL", default).lower()
 
     if loglevel in AVAILABLE_LOG_LEVELS.keys():
         return loglevel

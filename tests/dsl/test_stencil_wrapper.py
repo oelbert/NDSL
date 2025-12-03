@@ -1,7 +1,6 @@
 import contextlib
 import unittest.mock
 
-import gt4py.cartesian.gtscript
 import numpy as np
 import pytest
 
@@ -16,7 +15,23 @@ from ndsl import (
 from ndsl.dsl.gt4py import PARALLEL, computation, interval
 from ndsl.dsl.gt4py_utils import make_storage_from_shape
 from ndsl.dsl.stencil import _convert_quantities_to_storage
-from ndsl.dsl.typing import Float, FloatField
+from ndsl.dsl.typing import (
+    BoolFieldIJ,
+    Float,
+    FloatField,
+    FloatFieldIJ,
+    FloatFieldIJ32,
+    FloatFieldIJ64,
+    Int,
+    IntFieldIJ,
+    IntFieldIJ32,
+    IntFieldIJ64,
+)
+
+
+# GT4Py direct import need to be down after any `ndsl`
+import gt4py.cartesian.gtscript  # isort: skip
+from gt4py.cartesian import definitions  # isort: skip
 
 
 def get_stencil_config(
@@ -46,46 +61,57 @@ def mock_gtscript_stencil(mock):
         gt4py.cartesian.gtscript.stencil = original_stencil
 
 
-class MockFieldInfo:
-    def __init__(self, axes):
-        self.axes = axes
+class MockFieldInfo(definitions.FieldInfo):
+    def __init__(self, *, axes: tuple[str, ...] = (), data_dims: tuple[int, ...] = ()):
+        # defaults
+        access = definitions.AccessKind.READ
+        boundary = None
+        dtype = np.float64
+
+        super().__init__(
+            axes=axes,
+            data_dims=data_dims,
+            access=access,
+            boundary=boundary,
+            dtype=dtype,
+        )
 
 
 @pytest.mark.parametrize(
     "field_info, origin, field_origins",
     [
         pytest.param(
-            {"a": MockFieldInfo(["I"])},
+            {"a": MockFieldInfo(axes=("I"))},
             (1, 2, 3),
             {"_all_": (1, 2, 3), "a": (1,)},
             id="single_field_I",
         ),
         pytest.param(
-            {"a": MockFieldInfo(["J"])},
+            {"a": MockFieldInfo(axes=("J"))},
             (1, 2, 3),
             {"_all_": (1, 2, 3), "a": (2,)},
             id="single_field_J",
         ),
         pytest.param(
-            {"a": MockFieldInfo(["K"])},
+            {"a": MockFieldInfo(axes=("K"))},
             (1, 2, 3),
             {"_all_": (1, 2, 3), "a": (3,)},
             id="single_field_K",
         ),
         pytest.param(
-            {"a": MockFieldInfo(["I", "J"])},
+            {"a": MockFieldInfo(axes=("I", "J"))},
             (1, 2, 3),
             {"_all_": (1, 2, 3), "a": (1, 2)},
             id="single_field_IJ",
         ),
         pytest.param(
-            {"a": MockFieldInfo(["I", "J", "K"])},
+            {"a": MockFieldInfo(axes=("I", "J", "K"))},
             {"_all_": (1, 2, 3), "a": (1, 2, 3)},
             {"_all_": (1, 2, 3), "a": (1, 2, 3)},
             id="single_field_origin_mapping",
         ),
         pytest.param(
-            {"a": MockFieldInfo(["I", "J", "K"]), "b": MockFieldInfo(["I"])},
+            {"a": MockFieldInfo(axes=("I", "J", "K")), "b": MockFieldInfo(axes=("I"))},
             {"_all_": (1, 2, 3), "a": (1, 2, 3)},
             {"_all_": (1, 2, 3), "a": (1, 2, 3), "b": (1,)},
             id="two_fields_update_origin_mapping",
@@ -97,10 +123,22 @@ class MockFieldInfo:
             id="single_field_None",
         ),
         pytest.param(
-            {"a": MockFieldInfo(["I", "J"]), "b": MockFieldInfo(["I", "J", "K"])},
+            {
+                "a": MockFieldInfo(axes=("I", "J")),
+                "b": MockFieldInfo(axes=("I", "J", "K")),
+            },
             (1, 2, 3),
             {"_all_": (1, 2, 3), "a": (1, 2), "b": (1, 2, 3)},
             id="two_fields",
+        ),
+        pytest.param(
+            {
+                "field": MockFieldInfo(axes=("I", "J", "K")),
+                "table": MockFieldInfo(data_dims=(5,)),
+            },
+            (1, 2, 3),
+            {"_all_": (1, 2, 3), "field": (1, 2, 3), "table": (0,)},
+            id="field_and_table",
         ),
     ],
 )
@@ -237,7 +275,19 @@ def test_frozen_stencil_kwargs_passed_to_init(
         externals={},
         **config.stencil_kwargs(func=copy_stencil),
         build_info={},
-        dtypes={float: Float},
+        dtypes={
+            # Mixed precision
+            float: Float,
+            int: Int,
+            # 2D temporaries
+            "FloatFieldIJ": FloatFieldIJ,
+            "FloatFieldIJ32": FloatFieldIJ32,
+            "FloatFieldIJ64": FloatFieldIJ64,
+            "IntFieldIJ": IntFieldIJ,
+            "IntFieldIJ32": IntFieldIJ32,
+            "IntFieldIJ64": IntFieldIJ64,
+            "BoolFieldIJ": BoolFieldIJ,
+        },
     )
 
 
@@ -263,7 +313,7 @@ def test_frozen_field_after_parameter() -> None:
     )
 
 
-@pytest.mark.parametrize("backend", ("numpy", "cuda"))
+@pytest.mark.parametrize("backend", ("numpy", "gt:gpu"))
 def test_backend_options(
     backend: str,
     rebuild: bool = True,
@@ -274,14 +324,14 @@ def test_backend_options(
             "backend": "numpy",
             "rebuild": True,
             "format_source": False,
-            "name": "test_stencil_wrapper.copy_stencil",
+            "name": "tests.dsl.test_stencil_wrapper.copy_stencil",
         },
-        "cuda": {
-            "backend": "cuda",
+        "gt:gpu": {
+            "backend": "gt:gpu",
             "rebuild": True,
             "device_sync": False,
             "format_source": False,
-            "name": "test_stencil_wrapper.copy_stencil",
+            "name": "tests.dsl.test_stencil_wrapper.copy_stencil",
         },
     }
 
@@ -290,6 +340,11 @@ def test_backend_options(
     ).stencil_kwargs(func=copy_stencil)
     expected = expected_options[backend]
     assert actual == expected
+
+
+def test_illegal_backend_options():
+    with pytest.raises(ValueError):
+        get_stencil_config(backend="illegal")
 
 
 def get_mock_quantity():

@@ -1,6 +1,6 @@
 [build-system]
 build-backend = "setuptools.build_meta"
-requires = ["setuptools >= 77.0.3"]
+requires = ["setuptools >= 80", "setuptools-scm>=8"]
 
 [project]
 authors = [{name = "NOAA/NASA"}]
@@ -14,22 +14,23 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12"
 ]
-dynamic = ["dependencies"]
+dynamic = ["dependencies", "version"]
 license = "Apache-2.0"
 license-files = ["LICENSE.txt", "ndsl/viz/fv3/README.md"]
 name = "ndsl"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
-version = "2025.05.00"
 
 [project.optional-dependencies]
 demos = ["ipython", "ipykernel"]
-dev = ["ndsl[docs]", "ndsl[demos]", "ndsl[test]", "pre-commit", "flake8-pyproject"]
-docs = ["mkdocs-material"]
+dev = ["ndsl[docs]", "ndsl[demos]", "ndsl[test]", "pre-commit", "flake8-pyproject", "build"]
+docs = ["mkdocs-material", "mkdocstrings[python]", "mkdocs-exclude"]
 extras = ["ndsl[docs]", "ndsl[demos]", "ndsl[test]", "ndsl[dev]"]
-test = ["pytest", "pytest-subtests", "coverage"]
+test = ["pytest", "coverage"]
+zarr = ["zarr<3"]
 
 [project.scripts]
+best_guess_diff = "ndsl.stencils.testing.best_guess_diff:entry_point"
 ndsl-serialbox_to_netcdf = "ndsl.stencils.testing.serialbox_to_netcdf:entry_point"
 
 [project.urls]
@@ -54,7 +55,9 @@ extend-ignore = [
   "W503",  # Linebreak before binary operator
   # Clashes with NDSL/stencil syntax
   "E203",  # Space before ":", e.g. `field[1, :]`
-  "F841"  # Local variable assigned but unused
+  "F841",  # Local variable assigned but unused
+  # other
+  "B019"  # We'd like to keep using functools.lru_cache
 ]
 max-line-length = 88
 
@@ -66,15 +69,57 @@ profile = "black"
 sections = "FUTURE,STDLIB,THIRDPARTY,FIRSTPARTY,LOCALFOLDER"
 
 [tool.mypy]
-explicit_package_bases = "true"
-follow_imports = "normal"
-ignore_missing_imports = "true"
-namespace_packages = "true"
-strict_optional = "false"
-warn_unreachable = "true"
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+# TODO: understand what's wrong with imports and fix
+ignore_missing_imports = true
+strict_equality = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+disallow_incomplete_defs = false
+disallow_untyped_defs = false
+module = [
+  # TODO: fix issues and remove this override
+  "ndsl.grid.*",
+  "ndsl.viz.*",
+  # Unclear what happens to this module in the future
+  "ndsl.dsl.gt4py_utils",
+  # We don't fix legacy (unless we really need it)
+  "ndsl.restart._legacy_restart",
+  # These files are deprecated
+  "ndsl.exceptions",
+  "ndsl.stencils.corners",
+  "ndsl.units",
+  # translate test system is "beyond repair"
+  "ndsl.stencils.testing.translate",
+  "ndsl.stencils.testing.parallel_translate"
+]
+
+[[tool.mypy.overrides]]
+disallow_untyped_defs = false
+module = [
+  # Unclear what the state of these modules is
+  "ndsl.monitor.*",
+  "ndsl.stencils.testing.serialbox_to_netcdf",
+  # deprecated
+  "ndsl.filesystem",
+  # TODO: fix issue and remove this override
+  "ndsl.types",
+  "ndsl.comm._boundary_utils",
+  "ndsl.quantity.bounds"
+]
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["ndsl", "ndsl.*"]
+
+[tool.setuptools_scm]
+local_scheme = "dirty-tag"
+version_scheme = "guess-next-dev"
