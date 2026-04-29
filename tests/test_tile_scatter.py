@@ -1,7 +1,8 @@
 import pytest
 
 from ndsl import LocalComm, Quantity, TileCommunicator, TilePartitioner
-from ndsl.constants import X_DIM, X_INTERFACE_DIM, Y_DIM, Y_INTERFACE_DIM
+from ndsl.config import Backend
+from ndsl.constants import I_DIM, I_INTERFACE_DIM, J_DIM, J_INTERFACE_DIM
 
 
 def rank_scatter_results(communicator_list, quantity):
@@ -34,15 +35,15 @@ def test_interface_state_two_by_two_per_rank_scatter_tile(layout, numpy):
     state = {
         "pos_j": Quantity(
             numpy.empty([layout[0] + 1, layout[1] + 1]),
-            dims=[Y_INTERFACE_DIM, X_INTERFACE_DIM],
+            dims=[J_INTERFACE_DIM, I_INTERFACE_DIM],
             units="dimensionless",
-            backend="debug",
+            backend=Backend.python(),
         ),
         "pos_i": Quantity(
             numpy.empty([layout[0] + 1, layout[1] + 1], dtype=numpy.int32),
-            dims=[Y_INTERFACE_DIM, X_INTERFACE_DIM],
+            dims=[J_INTERFACE_DIM, I_INTERFACE_DIM],
             units="dimensionless",
-            backend="debug",
+            backend=Backend.python(),
         ),
     }
 
@@ -60,7 +61,7 @@ def test_interface_state_two_by_two_per_rank_scatter_tile(layout, numpy):
         assert rank_array.view[0, 1] == j
         assert rank_array.view[1, 0] == j + 1
         assert rank_array.view[1, 1] == j + 1
-        assert rank_array.data.dtype == state["pos_j"].data.dtype
+        assert rank_array.dtype == state["pos_j"].dtype
 
     for communicator, rank_array in rank_scatter_results(
         tile_communicator_list, state["pos_i"]
@@ -71,7 +72,7 @@ def test_interface_state_two_by_two_per_rank_scatter_tile(layout, numpy):
         assert rank_array.view[1, 0] == i
         assert rank_array.view[0, 1] == i + 1
         assert rank_array.view[1, 1] == i + 1
-        assert rank_array.data.dtype == state["pos_i"].data.dtype
+        assert rank_array.dtype == state["pos_i"].dtype
 
 
 @pytest.mark.parametrize("layout", [(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)])
@@ -80,21 +81,21 @@ def test_centered_state_one_item_per_rank_scatter_tile(layout, numpy):
     state = {
         "rank": Quantity(
             numpy.empty([layout[0], layout[1]]),
-            dims=[Y_DIM, X_DIM],
+            dims=[J_DIM, I_DIM],
             units="dimensionless",
-            backend="debug",
+            backend=Backend.python(),
         ),
         "rank_pos_j": Quantity(
             numpy.empty([layout[0], layout[1]]),
-            dims=[Y_DIM, X_DIM],
+            dims=[J_DIM, I_DIM],
             units="dimensionless",
-            backend="debug",
+            backend=Backend.python(),
         ),
         "rank_pos_i": Quantity(
             numpy.empty([layout[0], layout[1]]),
-            dims=[Y_DIM, X_DIM],
+            dims=[J_DIM, I_DIM],
             units="dimensionless",
-            backend="debug",
+            backend=Backend.python(),
         ),
     }
 
@@ -117,7 +118,7 @@ def test_centered_state_one_item_per_rank_scatter_tile(layout, numpy):
     ):
         assert rank_array.extent == (1, 1)
         assert rank_array.view[0, 0] == communicator.rank
-        assert rank_array.data.dtype == state["rank"].data.dtype
+        assert rank_array.dtype == state["rank"].dtype
     for communicator, rank_array in rank_scatter_results(
         tile_communicator_list, state["rank_pos_j"]
     ):
@@ -138,27 +139,27 @@ def test_centered_state_one_item_per_rank_with_halo_scatter_tile(layout, n_halo,
     state = {
         "rank": Quantity(
             numpy.empty([layout[0] + 2 * n_halo, layout[1] + 2 * n_halo]),
-            dims=[Y_DIM, X_DIM],
+            dims=[J_DIM, I_DIM],
             units="dimensionless",
             origin=(n_halo, n_halo),
             extent=extent,
-            backend="debug",
+            backend=Backend.python(),
         ),
         "rank_pos_j": Quantity(
             numpy.empty([layout[0] + 2 * n_halo, layout[1] + 2 * n_halo]),
-            dims=[Y_DIM, X_DIM],
+            dims=[J_DIM, I_DIM],
             units="dimensionless",
             origin=(n_halo, n_halo),
             extent=extent,
-            backend="debug",
+            backend=Backend.python(),
         ),
         "rank_pos_i": Quantity(
             numpy.empty([layout[0] + 2 * n_halo, layout[1] + 2 * n_halo]),
-            dims=[Y_DIM, X_DIM],
+            dims=[J_DIM, I_DIM],
             units="dimensionless",
             origin=(n_halo, n_halo),
             extent=extent,
-            backend="debug",
+            backend=Backend.python(),
         ),
     }
 
@@ -179,15 +180,15 @@ def test_centered_state_one_item_per_rank_with_halo_scatter_tile(layout, n_halo,
         tile_communicator_list, state["rank"]
     ):
         assert rank_array.extent == (1, 1)
-        assert rank_array.data[0, 0] == communicator.rank
-        assert rank_array.data.dtype == state["rank"].data.dtype
+        assert rank_array[0, 0] == communicator.rank
+        assert rank_array.dtype == state["rank"].dtype
     for communicator, rank_array in rank_scatter_results(
         tile_communicator_list, state["rank_pos_j"]
     ):
         assert rank_array.extent == (1, 1)
-        assert rank_array.view[0, 0] == partitioner.subtile_index(communicator.rank)[0]
+        assert rank_array.field[0, 0] == partitioner.subtile_index(communicator.rank)[0]
     for communicator, rank_array in rank_scatter_results(
         tile_communicator_list, state["rank_pos_i"]
     ):
         assert rank_array.extent == (1, 1)
-        assert rank_array.view[0, 0] == partitioner.subtile_index(communicator.rank)[1]
+        assert rank_array.field[0, 0] == partitioner.subtile_index(communicator.rank)[1]

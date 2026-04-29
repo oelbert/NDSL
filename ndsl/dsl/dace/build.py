@@ -2,6 +2,7 @@ from dace import config as dace_conf
 from dace.sdfg import SDFG
 from gt4py.cartesian import config as gt_config
 
+from ndsl.config import Backend
 from ndsl.dsl.caches.cache_location import get_cache_directory, get_cache_fullpath
 from ndsl.dsl.dace.dace_config import DaceConfig, DaCeOrchestration
 from ndsl.logging import ndsl_log
@@ -23,7 +24,11 @@ def build_info_filepath() -> str:
 
 
 def write_build_info(
-    sdfg: SDFG, layout: tuple[int, int], resolution_per_tile: list[int], backend: str
+    sdfg: SDFG,
+    layout: tuple[int, int],
+    resolution_per_tile: list[int],
+    memory_report: str,
+    backend: Backend,
 ) -> None:
     """Write down all relevant information on the build to identify
     it at load time."""
@@ -37,6 +42,9 @@ def write_build_info(
         build_info_read.write(f"{backend}\n")
         build_info_read.write(f"{str(layout)}\n")
         build_info_read.write(f"{str(resolution_per_tile)}\n")
+
+    with open(f"{path_to_sdfg_dir}/memory_report.txt", "w") as f:
+        f.write(memory_report)
 
 
 ################################################
@@ -86,7 +94,7 @@ def get_sdfg_path(
         build_info_file.readline()
         # Read in
         build_backend = build_info_file.readline().rstrip()
-        if config.get_backend() != build_backend:
+        if config.get_backend() != Backend(build_backend):
             raise RuntimeError(
                 f"SDFG build for {build_backend}, {config._backend} has been asked"
             )
@@ -106,17 +114,20 @@ def get_sdfg_path(
     return sdfg_dir_path
 
 
-def set_distributed_caches(config: DaceConfig) -> None:
-    """In Run mode, check required file then point current rank cache to source cache"""
+def set_distributed_caches(config: DaceConfig, force_build: bool = False) -> None:
+    """In Run mode, check required file then point current rank cache to source cache.
+
+    Optional: force build irregardless of backend or orchestration mode.
+    """
 
     # Execute specific initialization per orchestration state
-    orchestration_mode = config.get_orchestrate()
-    if orchestration_mode == DaCeOrchestration.Python:
+    if not config.get_backend().is_orchestrated() and not force_build:
         return
 
     # Check that we have all the file we need to early out in case
     # of issues.
-    if orchestration_mode == DaCeOrchestration.Run:
+    orchestration_mode = config.get_orchestrate()
+    if orchestration_mode == DaCeOrchestration.Run and not force_build:
         import os
 
         cache_directory = get_cache_fullpath(config.code_path)

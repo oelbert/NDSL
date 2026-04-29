@@ -5,10 +5,11 @@ import numpy as np
 import numpy.typing as npt
 
 import ndsl.dsl.gt4py_utils as utils
+from ndsl.config import Backend
 from ndsl.dsl.stencil import StencilFactory
 from ndsl.optional_imports import cupy as cp
 from ndsl.quantity import Quantity
-from ndsl.stencils.testing.grid import Grid  # type: ignore
+from ndsl.stencils.testing.grid import Grid
 from ndsl.stencils.testing.savepoint import DataLoader
 
 
@@ -22,7 +23,7 @@ def read_serialized_data(serializer, savepoint, variable):
     return data
 
 
-def pad_field_in_j(field, nj: int, backend: str):
+def pad_field_in_j(field, nj: int, backend: Backend):
     utils.device_sync(backend)
     outfield = utils.tile(field[:, 0, :], (nj, 1, 1)).transpose(1, 0, 2)
     return outfield
@@ -31,9 +32,9 @@ def pad_field_in_j(field, nj: int, backend: str):
 def as_numpy(
     value: dict[str, Any] | Quantity | np.ndarray,
 ) -> np.ndarray | dict[str, np.ndarray]:
-    def _convert(value: Quantity | np.ndarray) -> np.ndarray:
+    def _convert(value: Any) -> np.ndarray:
         if isinstance(value, Quantity):
-            return value.data
+            return value[:]
         elif isinstance(value, np.ndarray):
             return value
         elif cp is not None and isinstance(value, cp.ndarray):
@@ -73,10 +74,13 @@ class TranslateFortranData2Py:
         self.out_vars: dict[str, Any] = {}
         self.write_vars: list = []
         self.grid = grid
-        self.maxshape: tuple[int, ...] = grid.domain_shape_full(add=(1, 1, 1))
         self.ordered_input_vars = None
         self.ignore_near_zero_errors: dict[str, Any] = {}
         self.skip_test = skip_test
+        if self.stencil_factory.backend.is_fortran_aligned():
+            self.maxshape = self.grid.domain_shape_full()
+        else:
+            self.maxshape = self.grid.domain_shape_full(add=(1, 1, 1))
 
     def extra_data_load(self, data_loader: DataLoader):
         pass
@@ -358,7 +362,7 @@ class TranslateGrid:
     #     6---2---7
 
     @classmethod
-    def new_from_serialized_data(cls, serializer, rank, layout, backend):
+    def new_from_serialized_data(cls, serializer, rank, layout, backend: Backend):
         grid_savepoint = serializer.get_savepoint("Grid-Info")[0]
         grid_data = {}
         grid_fields = serializer.fields_at_savepoint(grid_savepoint)
@@ -366,7 +370,7 @@ class TranslateGrid:
             grid_data[field] = read_serialized_data(serializer, grid_savepoint, field)
         return cls(grid_data, rank, layout, backend=backend)
 
-    def __init__(self, inputs, rank, layout, *, backend: str):
+    def __init__(self, inputs, rank, layout, *, backend: Backend):
         self.backend = backend
         self.indices = {}
         self.shape_params = {}

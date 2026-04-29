@@ -12,11 +12,11 @@ from ndsl import (
     SubtileGridSizer,
     TilePartitioner,
 )
+from ndsl.config import Backend
 from ndsl.grid import MetricTerms
-from tests.mpi import MPI
 
 
-@pytest.mark.skipif(MPI is None, reason="pytest is not run in parallel")
+@pytest.mark.parallel
 @pytest.mark.parametrize("levels", [79, 91])
 def test_set_hybrid_pressure_coefficients_correct(levels):
     """
@@ -29,7 +29,7 @@ def test_set_hybrid_pressure_coefficients_correct(levels):
     eta_file = Path.cwd() / "tests" / "data" / "eta" / f"eta{levels}.nc"
     eta_data = xr.open_dataset(eta_file)
 
-    backend = "numpy"
+    backend = Backend.python()
 
     layout = (1, 1)
 
@@ -49,6 +49,7 @@ def test_set_hybrid_pressure_coefficients_correct(levels):
         layout=layout,
         tile_partitioner=partitioner.tile,
         tile_rank=communicator.tile.rank,
+        backend=backend,
     )
 
     quantity_factory = QuantityFactory(sizer, backend=backend)
@@ -57,8 +58,8 @@ def test_set_hybrid_pressure_coefficients_correct(levels):
         quantity_factory=quantity_factory, communicator=communicator, eta_file=eta_file
     )
 
-    ak_results = metric_terms.ak.data
-    bk_results = metric_terms.bk.data
+    ak_results = metric_terms.ak[:]
+    bk_results = metric_terms.bk[:]
     ak_answers, bk_answers = eta_data["ak"].values, eta_data["bk"].values
 
     assert ak_answers.size == ak_results.size, "Unexpected size of bk"

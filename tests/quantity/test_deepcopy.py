@@ -4,6 +4,7 @@ import dataclasses
 import numpy as np
 
 from ndsl import Quantity
+from ndsl.config import Backend
 
 
 def test_deepcopy_copy_is_editable_by_view():
@@ -14,14 +15,14 @@ def test_deepcopy_copy_is_editable_by_view():
         extent=(nx, ny, nz),
         dims=["x", "y", "z"],
         units="",
-        backend="debug",
+        backend=Backend.python(),
     )
     quantity_copy = copy.deepcopy(quantity)
     # assertion below is only valid if we're overwriting the entire data through view
-    assert np.prod(quantity_copy.view[:].shape) == np.prod(quantity_copy.data.shape)
+    assert np.prod(quantity_copy.view[:].shape) == np.prod(quantity_copy.shape)
     quantity_copy.view[:] = 1.0
-    np.testing.assert_array_equal(quantity.data, 0.0)
-    np.testing.assert_array_equal(quantity_copy.data, 1.0)
+    np.testing.assert_array_equal(quantity[:], 0.0)
+    np.testing.assert_array_equal(quantity_copy[:], 1.0)
 
 
 def test_deepcopy_copy_is_editable_by_data():
@@ -32,12 +33,12 @@ def test_deepcopy_copy_is_editable_by_data():
         extent=(nx, ny, nz),
         dims=["x", "y", "z"],
         units="",
-        backend="debug",
+        backend=Backend.python(),
     )
     quantity_copy = copy.deepcopy(quantity)
-    quantity_copy.data[:] = 1.0
-    np.testing.assert_array_equal(quantity.data, 0.0)
-    np.testing.assert_array_equal(quantity_copy.data, 1.0)
+    quantity_copy[:] = 1.0
+    np.testing.assert_array_equal(quantity[:], 0.0)
+    np.testing.assert_array_equal(quantity_copy[:], 1.0)
 
 
 def test_deepcopy_of_dataclass_is_editable_by_data():
@@ -48,10 +49,10 @@ def test_deepcopy_of_dataclass_is_editable_by_data():
         extent=(nx, ny, nz),
         dims=["x", "y", "z"],
         units="",
-        backend="debug",
+        backend=Backend.python(),
     )
     quantity_copy = copy.deepcopy(quantity)
-    quantity_copy.data[:] = 1.0
+    quantity_copy[:] = 1.0
 
     @dataclasses.dataclass
     class MyClass:
@@ -59,6 +60,6 @@ def test_deepcopy_of_dataclass_is_editable_by_data():
 
     instance = MyClass(quantity)
     instance_copy = copy.deepcopy(instance)
-    instance_copy.quantity.data[:] = 1.0
-    np.testing.assert_array_equal(instance.quantity.data, 0.0)
-    np.testing.assert_array_equal(instance_copy.quantity.data, 1.0)
+    instance_copy.quantity[:] = 1.0
+    np.testing.assert_array_equal(instance.quantity[:], 0.0)
+    np.testing.assert_array_equal(instance_copy.quantity[:], 1.0)

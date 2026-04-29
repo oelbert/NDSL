@@ -10,15 +10,16 @@ from ndsl import (
     Quantity,
     TilePartitioner,
 )
+from ndsl.config import Backend
 from ndsl.constants import (
     HORIZONTAL_DIMS,
+    I_DIM,
+    I_INTERFACE_DIM,
+    J_DIM,
+    J_INTERFACE_DIM,
+    K_DIM,
+    K_INTERFACE_DIM,
     TILE_DIM,
-    X_DIM,
-    X_INTERFACE_DIM,
-    Y_DIM,
-    Y_INTERFACE_DIM,
-    Z_DIM,
-    Z_INTERFACE_DIM,
 )
 from ndsl.performance import Timer
 
@@ -39,25 +40,19 @@ def n_tile_halo(request):
 
 
 @pytest.fixture(params=["x,y", "y,x", "xi,y", "x,y,z", "z,y,x", "y,z,x"])
-def dims(request, fast):
+def dims(request):
     if request.param == "x,y":
-        return [X_DIM, Y_DIM]
-    elif request.param == "y,x":
-        if fast:
-            pytest.skip("running in fast mode")
-        else:
-            return [Y_DIM, X_DIM]
-    elif request.param == "xi,y":
-        return [X_INTERFACE_DIM, Y_DIM]
-    elif request.param == "x,y,z":
-        return [X_DIM, Y_DIM, Z_DIM]
-    elif request.param == "z,y,x":
-        if fast:
-            pytest.skip("running in fast mode")
-        else:
-            return [Z_DIM, Y_DIM, X_DIM]
-    elif request.param == "y,z,x":
-        return [Y_DIM, Z_DIM, X_DIM]
+        return [I_DIM, J_DIM]
+    if request.param == "y,x":
+        return [J_DIM, I_DIM]
+    if request.param == "xi,y":
+        return [I_INTERFACE_DIM, J_DIM]
+    if request.param == "x,y,z":
+        return [I_DIM, J_DIM, K_DIM]
+    if request.param == "z,y,x":
+        return [K_DIM, J_DIM, I_DIM]
+    if request.param == "y,z,x":
+        return [J_DIM, K_DIM, I_DIM]
     else:
         raise NotImplementedError()
 
@@ -76,19 +71,19 @@ def assert_quantity_equals(result, reference):
     assert result.dims == reference.dims
     assert result.units == reference.units
     assert result.extent == reference.extent
-    assert isinstance(result.data, type(reference.data))
+    assert isinstance(result[:], type(reference[:]))
     reference.np.testing.assert_array_equal(result.view[:], reference.view[:])
 
 
 @pytest.fixture()
 def dim_lengths(layout):
     return {
-        X_DIM: 2 * layout[1],
-        X_INTERFACE_DIM: 2 * layout[1] + 1,
-        Y_DIM: 2 * layout[0],
-        Y_INTERFACE_DIM: 2 * layout[0] + 1,
-        Z_DIM: 3,
-        Z_INTERFACE_DIM: 4,
+        I_DIM: 2 * layout[1],
+        I_INTERFACE_DIM: 2 * layout[1] + 1,
+        J_DIM: 2 * layout[0],
+        J_INTERFACE_DIM: 2 * layout[0] + 1,
+        K_DIM: 3,
+        K_INTERFACE_DIM: 4,
     }
 
 
@@ -169,12 +164,12 @@ def get_quantity(dims, units, extent, n_halo, numpy):
         units,
         origin=tuple(origin),
         extent=tuple(extent),
-        backend="numpy",
+        backend=Backend.python(),
     )
 
 
 def test_cube_gather_state(
-    cube_quantity, scattered_quantities, communicator_list, time, backend
+    cube_quantity, scattered_quantities, communicator_list, time
 ):
     for communicator, rank_quantity in reversed(
         list(zip(communicator_list, scattered_quantities))
@@ -194,7 +189,7 @@ def test_cube_gather_state_with_recv_state(
     cube_quantity, scattered_quantities, communicator_list, time
 ):
     recv_state = {"time": time, "air_temperature": copy.deepcopy(cube_quantity)}
-    recv_state["air_temperature"].data[:] = -1
+    recv_state["air_temperature"][:] = -1
     for communicator, rank_quantity in reversed(
         list(zip(communicator_list, scattered_quantities))
     ):
@@ -238,7 +233,7 @@ def test_cube_scatter_with_recv_quantity(
 ):
     recv_quantities = copy.deepcopy(scattered_quantities)
     for q in recv_quantities:
-        q.data[:] = 0.0
+        q[:] = 0.0
     for recv, communicator in zip(recv_quantities, communicator_list):
         if communicator.rank == 0:
             result = communicator.scatter(
@@ -257,7 +252,7 @@ def test_cube_gather_with_recv_quantity(
     cube_quantity, scattered_quantities, communicator_list
 ):
     recv_quantity = copy.deepcopy(cube_quantity)
-    recv_quantity.data[:] = -1
+    recv_quantity[:] = -1
     for communicator, rank_quantity in reversed(
         list(zip(communicator_list, scattered_quantities))
     ):
@@ -293,7 +288,7 @@ def test_cube_scatter_state_with_recv_state(
     tile_state = {"time": time, "air_temperature": cube_quantity}
     recv_quantities = copy.deepcopy(scattered_quantities)
     for q in recv_quantities:
-        q.data[:] = 0.0
+        q[:] = 0.0
     for recv, communicator in zip(recv_quantities, communicator_list):
         state = {
             "time": time - datetime.timedelta(hours=1),

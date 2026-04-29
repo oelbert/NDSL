@@ -18,8 +18,9 @@ requirements: list[str] = [
     "netcdf4==1.7.2",
     "scipy",  # restart capacities only
     "h5netcdf",  # for xarray
+    "h5py",  # for h5netcdf >= 1.8
     "dask",  # for xarray
-    "numpy==1.26.4",
+    "numpy>=2",
     "matplotlib",  # for plotting in boilerplate
     "cartopy",  # for plotting in ndsl.viz
     "pytest-subtests",  # for translate tests

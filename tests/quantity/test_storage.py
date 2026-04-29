@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from ndsl import Quantity
+from ndsl.config import Backend
 from ndsl.optional_imports import cupy as cp
 
 
@@ -54,7 +55,12 @@ def data(n_halo, extent_1d, n_dims, numpy, dtype):
 @pytest.fixture
 def quantity(data, origin, extent, dims, units):
     return Quantity(
-        data, origin=origin, extent=extent, dims=dims, units=units, backend="debug"
+        data,
+        origin=origin,
+        extent=extent,
+        dims=dims,
+        units=units,
+        backend=Backend.python(),
     )
 
 
@@ -74,21 +80,21 @@ def test_modifying_numpy_data_modifies_view_and_field():
         extent=shape,
         dims=["dim1", "dim2"],
         units="units",
-        backend="numpy",
+        backend=Backend.python(),
     )
-    assert np.all(quantity.data == 0)
-    quantity.data[0, 0] = 1
-    quantity.data[2, 2] = 5
-    quantity.data[4, 4] = 3
+    assert np.all(quantity[:] == 0)
+    quantity[0, 0] = 1
+    quantity[2, 2] = 5
+    quantity[4, 4] = 3
     assert quantity.view[0, 0] == 1
     assert quantity.view[2, 2] == 5
     assert quantity.view[4, 4] == 3
     assert quantity.field[0, 0] == 1
     assert quantity.field[2, 2] == 5
     assert quantity.field[4, 4] == 3
-    assert quantity.data[0, 0] == 1
-    assert quantity.data[2, 2] == 5
-    assert quantity.data[4, 4] == 3
+    assert quantity[0, 0] == 1
+    assert quantity[2, 2] == 5
+    assert quantity[4, 4] == 3
 
 
 def test_data_and_field_access_right_full_array_and_compute_domain():
@@ -101,29 +107,27 @@ def test_data_and_field_access_right_full_array_and_compute_domain():
         extent=(5, 5),
         dims=["dim1", "dim2"],
         units="units",
-        backend="numpy",
+        backend=Backend.python(),
     )
-    assert np.all(quantity.data == 0)
+    assert np.all(quantity[:] == 0)
     # Write compute domain - test data is written with the offset
     quantity.field[:] = 11.11
     assert np.all(quantity.field == 11.11)
-    assert np.all(quantity.data[1:-1, 1:-1] == 11.11)
-    assert np.all(quantity.data[0:1, 0:1] == 0)
+    assert np.all(quantity[1:-1, 1:-1] == 11.11)
+    assert np.all(quantity[0:1, 0:1] == 0)
     # Write halo and test field has been left untouched
-    quantity.data[0:1, 0:1] = 33
-    assert np.all(quantity.data[0:1, 0:1] == 33)
+    quantity[0:1, 0:1] = 33
+    assert np.all(quantity[0:1, 0:1] == 33)
     assert np.all(quantity.field == 11.11)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "cupy"], indirect=True)
 def test_data_exists(quantity, backend):
     if "numpy" in backend:
-        assert isinstance(quantity.data, np.ndarray)
+        assert isinstance(quantity._data, np.ndarray)
     else:
-        assert isinstance(quantity.data, cp.ndarray)
+        assert isinstance(quantity._data, cp.ndarray)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "cupy"], indirect=True)
 def test_field_exists(quantity, backend):
     if "numpy" in backend:
         assert isinstance(quantity.field, np.ndarray)
@@ -131,9 +135,8 @@ def test_field_exists(quantity, backend):
         assert isinstance(quantity.field, cp.ndarray)
 
 
-@pytest.mark.parametrize("backend", ["numpy", "cupy"], indirect=True)
 def test_accessing_data_does_not_break_view(
-    data, origin, extent, dims, units, gt4py_backend
+    data, origin, extent, dims, units, ndsl_backend
 ):
     quantity = Quantity(
         data,
@@ -141,18 +144,15 @@ def test_accessing_data_does_not_break_view(
         extent=extent,
         dims=dims,
         units=units,
-        backend=gt4py_backend,
+        backend=ndsl_backend,
     )
-    quantity.data[origin] = -1.0
-    assert quantity.data[origin] == quantity.view[tuple(0 for _ in origin)]
-    assert quantity.data[origin] == quantity.field[tuple(0 for _ in origin)]
+    quantity[origin] = -1.0
+    assert quantity[origin] == quantity.view[tuple(0 for _ in origin)]
+    assert quantity[origin] == quantity.field[tuple(0 for _ in origin)]
 
 
-# run using cupy backend even though unused, to mark this as a "gpu" test
-@pytest.mark.parametrize("backend", ["cupy"], indirect=True)
-def test_numpy_data_becomes_cupy_with_gpu_backend(
-    data, origin, extent, dims, units, gt4py_backend
-):
+@pytest.mark.gpu
+def test_numpy_data_becomes_cupy_with_gpu_backend(data, origin, extent, dims, units):
     cpu_data = np.zeros(data.shape)
     quantity = Quantity(
         cpu_data,
@@ -160,6 +160,6 @@ def test_numpy_data_becomes_cupy_with_gpu_backend(
         extent=extent,
         dims=dims,
         units=units,
-        backend=gt4py_backend,
+        backend=Backend("st:dace:gpu:KIJ"),
     )
     assert isinstance(quantity.data, cp.ndarray)

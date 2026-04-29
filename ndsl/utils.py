@@ -5,6 +5,7 @@ from typing import TypeVar
 
 import f90nml
 import numpy as np
+import numpy.typing as npt
 
 import ndsl.constants as constants
 from ndsl.optional_imports import cupy as cp
@@ -39,9 +40,9 @@ def list_by_dims(
     """
     return_list = []
     for dim in dims:
-        if dim in constants.Y_DIMS:
+        if dim in constants.J_DIMS:
             return_list.append(horizontal_list[0])
-        elif dim in constants.X_DIMS:
+        elif dim in constants.I_DIMS:
             return_list.append(horizontal_list[1])
         else:
             return_list.append(non_horizontal_value)
@@ -88,7 +89,7 @@ def device_synchronize() -> None:
 
 
 def safe_mpi_allocate(
-    allocator: Allocator, shape: Iterable[int], dtype: type
+    allocator: Allocator, shape: Iterable[int], dtype: npt.DTypeLike
 ) -> np.ndarray:
     """Make sure the allocation use an allocator that works with MPI
 

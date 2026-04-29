@@ -7,7 +7,8 @@ from ndsl import (
     Quantity,
     TilePartitioner,
 )
-from ndsl.constants import X_DIM, X_INTERFACE_DIM, Y_DIM, Y_INTERFACE_DIM
+from ndsl.config import Backend
+from ndsl.constants import I_DIM, I_INTERFACE_DIM, J_DIM, J_INTERFACE_DIM
 from ndsl.performance import Timer
 
 
@@ -77,21 +78,21 @@ def rank_quantity_list(total_ranks, numpy, dtype, units=units):
         x_data[:] = rank
         x_quantity = Quantity(
             x_data,
-            dims=(Y_INTERFACE_DIM, X_DIM),
+            dims=(J_INTERFACE_DIM, I_DIM),
             units=units,
             origin=(0, 0),
             extent=(3, 2),
-            backend="debug",
+            backend=Backend.python(),
         )
         y_data = numpy.empty((2, 3), dtype=dtype)
         y_data[:] = rank
         y_quantity = Quantity(
             y_data,
-            dims=(Y_DIM, X_INTERFACE_DIM),
+            dims=(J_DIM, I_INTERFACE_DIM),
             units=units,
             origin=(0, 0),
             extent=(2, 3),
-            backend="debug",
+            backend=Backend.python(),
         )
         quantity_list.append((x_quantity, y_quantity))
     return quantity_list
@@ -130,8 +131,8 @@ def test_correct_ranks_are_synchronized_with_no_halos(
     for (x_quantity, y_quantity), (target_x, target_y) in zip(
         rank_quantity_list, rank_target_list
     ):
-        numpy.testing.assert_array_equal(numpy.abs(x_quantity.data), target_x)
-        numpy.testing.assert_array_equal(numpy.abs(y_quantity.data), target_y)
+        numpy.testing.assert_array_equal(numpy.abs(x_quantity[:]), target_x)
+        numpy.testing.assert_array_equal(numpy.abs(y_quantity[:]), target_y)
 
 
 @pytest.fixture
@@ -145,20 +146,20 @@ def counting_quantity_list(total_ranks, numpy, dtype, units=units):
         x_data = numpy.array([[0, 1], [2, 3], [4, 5]]) + 6 * rank
         x_quantity = Quantity(
             x_data,
-            dims=(Y_INTERFACE_DIM, X_DIM),
+            dims=(J_INTERFACE_DIM, I_DIM),
             units=units,
             origin=(0, 0),
             extent=(3, 2),
-            backend="debug",
+            backend=Backend.python(),
         )
         y_data = 6 * total_ranks + numpy.array([[0, 1, 2], [3, 4, 5]]) + 6 * rank
         y_quantity = Quantity(
             y_data,
-            dims=(Y_DIM, X_INTERFACE_DIM),
+            dims=(J_DIM, I_INTERFACE_DIM),
             units=units,
             origin=(0, 0),
             extent=(2, 3),
-            backend="debug",
+            backend=Backend.python(),
         )
         quantity_list.append((x_quantity, y_quantity))
     return quantity_list
@@ -184,17 +185,17 @@ def test_specific_edges_synced_correctly_on_first_rank(
         req.wait()
     first_rank_x, first_rank_y = counting_quantity_list[0]
     numpy.testing.assert_array_equal(
-        first_rank_y.data, numpy.array([[36, 37, 42], [39, 40, 45]])
+        first_rank_y[:], numpy.array([[36, 37, 42], [39, 40, 45]])
     )
     numpy.testing.assert_array_equal(
-        first_rank_x.data, numpy.array([[0, 1], [2, 3], [-3 - 36 - 12, -36 - 12]])
+        first_rank_x[:], numpy.array([[0, 1], [2, 3], [-3 - 36 - 12, -36 - 12]])
     )
     second_rank_x, second_rank_y = counting_quantity_list[1]
     numpy.testing.assert_array_equal(
-        second_rank_y.data, numpy.array([[42, 43, -19], [45, 46, -18]])
+        second_rank_y[:], numpy.array([[42, 43, -19], [45, 46, -18]])
     )
     numpy.testing.assert_array_equal(
-        second_rank_x.data, numpy.array([[6, 7], [8, 9], [12, 13]])
+        second_rank_x[:], numpy.array([[6, 7], [8, 9], [12, 13]])
     )
 
 
@@ -223,12 +224,12 @@ def test_interior_edges_synced_correctly_on_first_tile(
         req.wait()
     _, first_rank_y = counting_quantity_list[0]
     numpy.testing.assert_array_equal(
-        first_rank_y.data, total_ranks * 6 + numpy.array([[0, 1, 6], [3, 4, 9]])
+        first_rank_y[:], total_ranks * 6 + numpy.array([[0, 1, 6], [3, 4, 9]])
     )
     fifth_rank_x, fifth_rank_y = counting_quantity_list[4]
     numpy.testing.assert_array_equal(
-        fifth_rank_y.data, (total_ranks + 4) * 6 + numpy.array([[0, 1, 6], [3, 4, 9]])
+        fifth_rank_y[:], (total_ranks + 4) * 6 + numpy.array([[0, 1, 6], [3, 4, 9]])
     )
     numpy.testing.assert_array_equal(
-        fifth_rank_x.data, 4 * 6 + numpy.array([[0, 1], [2, 3], [18, 19]])
+        fifth_rank_x[:], 4 * 6 + numpy.array([[0, 1], [2, 3], [18, 19]])
     )

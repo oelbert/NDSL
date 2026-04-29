@@ -4,6 +4,8 @@ import abc
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from types import ModuleType
+from typing import no_type_check
 from uuid import UUID, uuid1
 
 import numpy as np
@@ -22,7 +24,6 @@ from ndsl.halo.cuda_kernels import (
 from ndsl.halo.rotate import rotate_scalar_data, rotate_vector_data
 from ndsl.optional_imports import cupy as cp
 from ndsl.quantity import Quantity, QuantityHaloSpec
-from ndsl.types import NumpyModule
 from ndsl.utils import device_synchronize
 
 
@@ -53,10 +54,14 @@ def _push_stream(stream: "cp.cuda.Stream") -> None:
 INDICES_CACHE: dict[str, "cp.ndarray"] = {}
 
 
-def _build_flatten_indices(  # type: ignore[no-untyped-def]
+# `array_value[...] = xxx` is failing mypy because of bad inference
+# of the type. We can't type ignore, because mypy also thinks that it
+# no needed (but if removed, it will fail...)
+@no_type_check
+def _build_flatten_indices(
     key,
     shape,
-    slices: tuple[slice],
+    slices: tuple[slice, ...],
     dims,
     strides,
     itemsize: int,
@@ -186,7 +191,7 @@ class HaloDataTransformer(abc.ABC):
 
     def __init__(
         self,
-        np_module: NumpyModule,
+        np_module: ModuleType,
         exchange_descriptors_x: Sequence[HaloExchangeSpec],
         exchange_descriptors_y: Sequence[HaloExchangeSpec] | None = None,
     ) -> None:
@@ -237,7 +242,7 @@ class HaloDataTransformer(abc.ABC):
 
     @staticmethod
     def get(
-        np_module: NumpyModule,
+        np_module: ModuleType,
         exchange_descriptors_x: Sequence[HaloExchangeSpec],
         exchange_descriptors_y: Sequence[HaloExchangeSpec] | None = None,
     ) -> HaloDataTransformer:
@@ -308,7 +313,7 @@ class HaloDataTransformer(abc.ABC):
 
         # Compute required size
         buffer_size = 0
-        dtype = None
+        dtype = np.float32  # default that will be overriden or not used
         for edge_x in self._infos_x:
             buffer_size += edge_x.pack_buffer_size
             dtype = edge_x.specification.dtype
@@ -318,10 +323,14 @@ class HaloDataTransformer(abc.ABC):
 
         # Retrieve two properly sized buffers
         self._pack_buffer = Buffer.pop_from_cache(
-            self._np_module.zeros, (buffer_size,), dtype  # type: ignore[arg-type]
+            self._np_module.zeros,
+            (buffer_size,),
+            dtype,
         )
         self._unpack_buffer = Buffer.pop_from_cache(
-            self._np_module.zeros, (buffer_size,), dtype  # type: ignore[arg-type]
+            self._np_module.zeros,
+            (buffer_size,),
+            dtype,
         )
 
     def ready(self) -> bool:
@@ -352,8 +361,8 @@ class HaloDataTransformer(abc.ABC):
     @abc.abstractmethod
     def async_unpack(
         self,
-        quantities_x: list[Quantity],
-        quantities_y: list[Quantity] | None = None,
+        quantities_x: Sequence[Quantity],
+        quantities_y: Sequence[Quantity] | None = None,
     ) -> None:
         """Unpack the buffer into destination quantities.
 
@@ -392,8 +401,8 @@ class HaloDataTransformerCPU(HaloDataTransformer):
 
     def async_pack(
         self,
-        quantities_x: list[Quantity],
-        quantities_y: list[Quantity] | None = None,
+        quantities_x: Sequence[Quantity],
+        quantities_y: Sequence[Quantity] | None = None,
     ) -> None:
         # Unpack per type
         if self._type == _HaloDataTransformerType.SCALAR:
@@ -406,7 +415,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
 
         assert isinstance(self._pack_buffer, Buffer)  # e.g. allocate happened
 
-    def _pack_scalar(self, quantities: list[Quantity]) -> None:
+    def _pack_scalar(self, quantities: Sequence[Quantity]) -> None:
         if __debug__:
             if len(quantities) != len(self._infos_x):
                 raise RuntimeError(
@@ -424,7 +433,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
             # Thus we rotate that number of times counterclockwise before sending,
             # to get the right final orientation
             source_view = rotate_scalar_data(
-                quantity.data[info_x.pack_slices],
+                quantity[info_x.pack_slices],
                 quantity.dims,
                 quantity.np,
                 -info_x.pack_clockwise_rotation,
@@ -436,7 +445,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
             offset += data_size
 
     def _pack_vector(
-        self, quantities_x: list[Quantity], quantities_y: list[Quantity]
+        self, quantities_x: Sequence[Quantity], quantities_y: Sequence[Quantity]
     ) -> None:
         if __debug__:
             if len(quantities_x) != len(self._infos_x) and len(quantities_y) != len(
@@ -464,8 +473,8 @@ class HaloDataTransformerCPU(HaloDataTransformer):
             # Thus we rotate that number of times counterclockwise before sending,
             # to get the right final orientation
             x_view, y_view = rotate_vector_data(
-                quantity_x.data[info_x.pack_slices],
-                quantity_y.data[info_y.pack_slices],
+                quantity_x[info_x.pack_slices],
+                quantity_y[info_y.pack_slices],
                 -info_x.pack_clockwise_rotation,
                 quantity_x.dims,
                 quantity_x.np,
@@ -485,8 +494,8 @@ class HaloDataTransformerCPU(HaloDataTransformer):
 
     def async_unpack(
         self,
-        quantities_x: list[Quantity],
-        quantities_y: list[Quantity] | None = None,
+        quantities_x: Sequence[Quantity],
+        quantities_y: Sequence[Quantity] | None = None,
     ) -> None:
         # Unpack per type
         if self._type == _HaloDataTransformerType.SCALAR:
@@ -499,7 +508,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
 
         assert isinstance(self._unpack_buffer, Buffer)  # e.g. allocate happened
 
-    def _unpack_scalar(self, quantities: list[Quantity]) -> None:
+    def _unpack_scalar(self, quantities: Sequence[Quantity]) -> None:
         if __debug__:
             if len(quantities) != len(self._infos_x):
                 raise RuntimeError(
@@ -511,7 +520,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
         assert isinstance(self._unpack_buffer, Buffer)  # e.g. allocate happened
         offset = 0
         for quantity, info_x in zip(quantities, self._infos_x):
-            quantity_view = quantity.data[info_x.unpack_slices]
+            quantity_view = quantity[info_x.unpack_slices]
             data_size = _slices_size(info_x.unpack_slices)
             self._unpack_buffer.assign_to(
                 quantity_view,
@@ -521,7 +530,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
             offset += data_size
 
     def _unpack_vector(
-        self, quantities_x: list[Quantity], quantities_y: list[Quantity]
+        self, quantities_x: Sequence[Quantity], quantities_y: Sequence[Quantity]
     ) -> None:
         if __debug__:
             if len(quantities_x) != len(self._infos_x) and len(quantities_y) != len(
@@ -539,7 +548,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
         for quantity_x, quantity_y, info_x, info_y in zip(
             quantities_x, quantities_y, self._infos_x, self._infos_y
         ):
-            quantity_view = quantity_x.data[info_x.unpack_slices]
+            quantity_view = quantity_x[info_x.unpack_slices]
             data_size = _slices_size(info_x.unpack_slices)
             self._unpack_buffer.assign_to(
                 quantity_view,
@@ -547,7 +556,7 @@ class HaloDataTransformerCPU(HaloDataTransformer):
                 buffer_reshape=quantity_view.shape,
             )
             offset += data_size
-            quantity_view = quantity_y.data[info_y.unpack_slices]
+            quantity_view = quantity_y[info_y.unpack_slices]
             data_size = _slices_size(info_y.unpack_slices)
             self._unpack_buffer.assign_to(
                 quantity_view,
@@ -585,7 +594,7 @@ class HaloDataTransformerGPU(HaloDataTransformer):
 
     def __init__(
         self,
-        np_module: NumpyModule,
+        np_module: ModuleType,
         exchange_descriptors_x: Sequence[HaloExchangeSpec],
         exchange_descriptors_y: Sequence[HaloExchangeSpec] | None = None,
     ) -> None:
@@ -599,7 +608,7 @@ class HaloDataTransformerGPU(HaloDataTransformer):
     def _flatten_indices(
         self,
         exchange_data: HaloExchangeSpec,
-        slices: tuple[slice],
+        slices: tuple[slice, ...],
         rotate: bool,
     ) -> "cp.ndarray":
         """Extract a flat array of indices from the memory layout and the slice.
@@ -643,10 +652,14 @@ class HaloDataTransformerGPU(HaloDataTransformer):
                 self._cu_kernel_args[info_x._id] = HaloDataTransformerGPU._CuKernelArgs(
                     stream=_pop_stream(),
                     x_send_indices=self._flatten_indices(
-                        info_x, info_x.pack_slices, True  # type: ignore[arg-type]
+                        info_x,
+                        info_x.pack_slices,
+                        True,
                     ),
                     x_recv_indices=self._flatten_indices(
-                        info_x, info_x.unpack_slices, False  # type: ignore[arg-type]
+                        info_x,
+                        info_x.unpack_slices,
+                        False,
                     ),
                     y_send_indices=None,
                     y_recv_indices=None,
@@ -657,16 +670,24 @@ class HaloDataTransformerGPU(HaloDataTransformer):
                 self._cu_kernel_args[info_x._id] = HaloDataTransformerGPU._CuKernelArgs(
                     stream=_pop_stream(),
                     x_send_indices=self._flatten_indices(
-                        info_x, info_x.pack_slices, True  # type: ignore[arg-type]
+                        info_x,
+                        info_x.pack_slices,
+                        True,
                     ),
                     x_recv_indices=self._flatten_indices(
-                        info_x, info_x.unpack_slices, False  # type: ignore[arg-type]
+                        info_x,
+                        info_x.unpack_slices,
+                        False,
                     ),
                     y_send_indices=self._flatten_indices(
-                        info_y, info_y.pack_slices, True  # type: ignore[arg-type]
+                        info_y,
+                        info_y.pack_slices,
+                        True,
                     ),
                     y_recv_indices=self._flatten_indices(
-                        info_y, info_y.unpack_slices, False  # type: ignore[arg-type]
+                        info_y,
+                        info_y.unpack_slices,
+                        False,
                     ),
                 )
 
@@ -758,7 +779,7 @@ class HaloDataTransformerGPU(HaloDataTransformer):
                         (grid_x,),
                         (blocks,),
                         (
-                            quantity.data[:],  # source_array
+                            quantity[:],  # source_array
                             cu_kernel_args.x_send_indices,  # indices
                             info_x.pack_buffer_size,  # nIndex
                             offset,
@@ -827,8 +848,8 @@ class HaloDataTransformerGPU(HaloDataTransformer):
                         (grid_x,),
                         (blocks,),
                         (
-                            quantity_x.data[:],  # source_array_x
-                            quantity_y.data[:],  # source_array_y
+                            quantity_x[:],  # source_array_x
+                            quantity_y[:],  # source_array_y
                             cu_kernel_args.x_send_indices,  # indices_x
                             cu_kernel_args.y_send_indices,  # indices_y
                             info_x.pack_buffer_size,  # nIndex_x
@@ -844,8 +865,8 @@ class HaloDataTransformerGPU(HaloDataTransformer):
 
     def async_unpack(
         self,
-        quantities_x: list[Quantity],
-        quantities_y: list[Quantity] | None = None,
+        quantities_x: Sequence[Quantity],
+        quantities_y: Sequence[Quantity] | None = None,
     ) -> None:
         """Unpack the quantities from a single buffer via streamed cuda kernels
 
@@ -866,7 +887,7 @@ class HaloDataTransformerGPU(HaloDataTransformer):
         else:
             raise RuntimeError(f"Unimplemented {self._type} unpack")
 
-    def _opt_unpack_scalar(self, quantities: list[Quantity]) -> None:
+    def _opt_unpack_scalar(self, quantities: Sequence[Quantity]) -> None:
         """Specialized unpacking for scalars. See async_unpack docs for usage."""
         if __debug__:
             if len(quantities) != len(self._infos_x):
@@ -913,7 +934,7 @@ class HaloDataTransformerGPU(HaloDataTransformer):
                             cu_kernel_args.x_recv_indices,  # indices
                             info_x._unpack_buffer_size,  # nIndex
                             offset,
-                            quantity.data[:],  # destination_array
+                            quantity[:],  # destination_array
                         ),
                     )
 
@@ -921,7 +942,7 @@ class HaloDataTransformerGPU(HaloDataTransformer):
                 offset += info_x._unpack_buffer_size
 
     def _opt_unpack_vector(
-        self, quantities_x: list[Quantity], quantities_y: list[Quantity]
+        self, quantities_x: Sequence[Quantity], quantities_y: Sequence[Quantity]
     ) -> None:
         """Specialized unpacking for vectors. See async_unpack docs for usage."""
         if __debug__:
@@ -984,8 +1005,8 @@ class HaloDataTransformerGPU(HaloDataTransformer):
                             info_x._unpack_buffer_size,  # nIndex_x
                             info_y._unpack_buffer_size,  # nIndex_y
                             offset,
-                            quantity_x.data[:],  # destination_array_x
-                            quantity_y.data[:],  # destination_array_y
+                            quantity_x[:],  # destination_array_x
+                            quantity_y[:],  # destination_array_y
                         ),
                     )
 

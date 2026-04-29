@@ -1,18 +1,15 @@
 import numpy as np
 import pytest
-import xarray as xr
 
 from ndsl import Quantity
+from ndsl.config import Backend
 from ndsl.quantity.bounds import _shift_slice
 
 
 @pytest.fixture(params=["empty", "one", "five"])
-def extent_1d(request, backend, n_halo):
+def extent_1d(request):
     if request.param == "empty":
-        if "gt4py" in backend and n_halo == 0:
-            pytest.skip("gt4py does not support length-zero dimensions")
-        else:
-            return 0
+        return 0
     elif request.param == "one":
         return 1
     elif request.param == "five":
@@ -63,7 +60,12 @@ def data(n_halo, extent_1d, n_dims, numpy, dtype):
 @pytest.fixture
 def quantity(data, origin, extent, dims, units):
     return Quantity(
-        data, origin=origin, extent=extent, dims=dims, units=units, backend="debug"
+        data,
+        origin=origin,
+        extent=extent,
+        dims=dims,
+        units=units,
+        backend=Backend.python(),
     )
 
 
@@ -83,7 +85,7 @@ def test_smaller_data_raises(data, origin, extent, dims, units):
                     extent=extent,
                     dims=dims,
                     units=units,
-                    backend="debug",
+                    backend=Backend.python(),
                 )
 
 
@@ -97,7 +99,7 @@ def test_smaller_dims_raises(data, origin, extent, dims, units):
             extent=extent,
             dims=dims[:-1],
             units=units,
-            backend="debug",
+            backend=Backend.python(),
         )
 
 
@@ -109,7 +111,7 @@ def test_smaller_origin_raises(data, origin, extent, dims, units):
             extent=extent,
             dims=dims,
             units=units,
-            backend="debug",
+            backend=Backend.python(),
         )
 
 
@@ -121,13 +123,13 @@ def test_smaller_extent_raises(data, origin, extent, dims, units):
             extent=extent[:-1],
             dims=dims,
             units=units,
-            backend="debug",
+            backend=Backend.python(),
         )
 
 
 def test_data_change_affects_quantity(data, quantity, numpy):
     data[:] = 5.0
-    numpy.testing.assert_array_equal(quantity.data, 5.0)
+    numpy.testing.assert_array_equal(quantity, 5.0)
 
 
 def test_quantity_units(quantity, units):
@@ -148,7 +150,7 @@ def test_quantity_extent(quantity, extent):
 
 
 def test_compute_view_get_value(quantity, extent_1d, n_halo, n_dims):
-    quantity.data[:] = 0.0
+    quantity[:] = 0.0
     if extent_1d == 0 and n_halo == 0:
         with pytest.raises(IndexError):
             quantity.view[[0] * n_dims]
@@ -158,50 +160,50 @@ def test_compute_view_get_value(quantity, extent_1d, n_halo, n_dims):
 
 
 def test_compute_view_edit_start_halo(quantity, extent_1d, n_halo, n_dims):
-    quantity.data[:] = 0.0
+    quantity[:] = 0.0
     if extent_1d == 0 and n_halo == 0:
         with pytest.raises(IndexError):
             quantity.view[[-1] * n_dims] = 1
     else:
         quantity.view[[-1] * n_dims] = 1
-        assert quantity.np.sum(quantity.data) == 1.0
-        assert quantity.data[(n_halo - 1,) * n_dims] == 1
+        assert quantity.np.sum(quantity) == 1.0
+        assert quantity[(n_halo - 1,) * n_dims] == 1
 
 
 def test_compute_view_edit_end_halo(quantity, extent_1d, n_halo, n_dims):
-    quantity.data[:] = 0.0
+    quantity[:] = 0.0
     if n_halo == 0:
         with pytest.raises(IndexError):
             quantity.view[[extent_1d] * n_dims] = 1
     else:
         quantity.view[(extent_1d,) * n_dims] = 1
-        assert quantity.np.sum(quantity.data) == 1.0
-        assert quantity.data[(n_halo + extent_1d,) * n_dims] == 1
+        assert quantity.np.sum(quantity) == 1.0
+        assert quantity[(n_halo + extent_1d,) * n_dims] == 1
 
 
 def test_compute_view_edit_start_of_domain(quantity, extent_1d, n_halo, n_dims):
     if extent_1d == 0:
-        pytest.skip("cannot edit an empty domain")
-    quantity.data[:] = 0.0
+        return  # cannot edit an empty domain
+
+    quantity[:] = 0.0
     quantity.view[(0,) * n_dims] = 1
-    assert quantity.data[(n_halo,) * n_dims] == 1
-    assert quantity.np.sum(quantity.data) == 1.0
+    assert quantity[(n_halo,) * n_dims] == 1
+    assert quantity.np.sum(quantity) == 1.0
 
 
 def test_compute_view_edit_all_domain(quantity, n_halo, n_dims, extent_1d):
     if extent_1d == 0:
-        pytest.skip("cannot edit an empty domain")
-    quantity.data[:] = 0.0
+        return  # cannot edit an empty domain
+
+    quantity[:] = 0.0
     quantity.view[:] = 1
-    assert quantity.np.sum(quantity.data) == extent_1d**n_dims
+    assert quantity.np.sum(quantity) == extent_1d**n_dims
     if n_dims > 1:
-        quantity.np.testing.assert_array_equal(quantity.data[:n_halo, :], 0.0)
-        quantity.np.testing.assert_array_equal(
-            quantity.data[n_halo + extent_1d :, :], 0.0
-        )
+        quantity.np.testing.assert_array_equal(quantity[:n_halo, :], 0.0)
+        quantity.np.testing.assert_array_equal(quantity[n_halo + extent_1d :, :], 0.0)
     else:
-        quantity.np.testing.assert_array_equal(quantity.data[:n_halo], 0.0)
-        quantity.np.testing.assert_array_equal(quantity.data[n_halo + extent_1d :], 0.0)
+        quantity.np.testing.assert_array_equal(quantity[:n_halo], 0.0)
+        quantity.np.testing.assert_array_equal(quantity[n_halo + extent_1d :], 0.0)
 
 
 @pytest.mark.parametrize(
@@ -253,7 +255,12 @@ def test_compute_view_edit_all_domain(quantity, n_halo, n_dims, extent_1d):
         ),
     ],
 )
-def test_shift_slice(slice_in, shift, extent, slice_out):
+def test_shift_slice(
+    slice_in: slice,
+    shift: int,
+    extent: int,
+    slice_out: slice,
+) -> None:
     result = _shift_slice(slice_in, shift, extent)
     assert result == slice_out
 
@@ -261,15 +268,18 @@ def test_shift_slice(slice_in, shift, extent, slice_out):
 @pytest.mark.parametrize(
     "quantity",
     [
-        Quantity(np.array(5), dims=[], units="", backend="debug"),
+        Quantity(np.array(5), dims=[], units="", backend=Backend.python()),
         Quantity(
-            np.array([1, 2, 3]), dims=["dimension"], units="degK", backend="debug"
+            np.array([1, 2, 3]),
+            dims=["dimension"],
+            units="degK",
+            backend=Backend.python(),
         ),
         Quantity(
             np.random.randn(3, 2, 4),
             dims=["dim1", "dim_2", "dimension_3"],
             units="m",
-            backend="debug",
+            backend=Backend.python(),
         ),
         Quantity(
             np.random.randn(8, 6, 6),
@@ -277,7 +287,7 @@ def test_shift_slice(slice_in, shift, extent, slice_out):
             units="km",
             origin=(2, 2, 2),
             extent=(4, 2, 2),
-            backend="debug",
+            backend=Backend.python(),
         ),
     ],
 )
@@ -286,114 +296,53 @@ def test_to_data_array(quantity):
     assert quantity.field_as_xarray.dims == quantity.dims
     assert quantity.field_as_xarray.shape == quantity.extent
     np.testing.assert_array_equal(quantity.field_as_xarray.values, quantity.view[:])
-    if quantity.extent == quantity.data.shape:
+    if quantity.extent == quantity.shape:
         assert (
-            quantity.field_as_xarray.data.ctypes.data == quantity.data.ctypes.data
+            quantity.field_as_xarray.data.ctypes.data == quantity._data.ctypes.data
         ), "data memory address is not equal"
 
 
+def test_data_attribute_and_default_setter_are_the_same():
+    quantity = Quantity(
+        np.arange(
+            5,
+        ),
+        dims=["dim1"],
+        units="",
+        backend=Backend.python(),
+    )
+
+    assert quantity.shape == quantity._data.shape
+    assert quantity[3] == quantity._data[3]
+    quantity[2] = 42.0
+    assert quantity._data[2] == 42.0
+
+
 def test_data_setter():
-    quantity = Quantity(np.ones((5,)), dims=["dim1"], units="", backend="debug")
+    quantity = Quantity(
+        np.ones((5,)), dims=["dim1"], units="", backend=Backend.python()
+    )
 
     # After allocation - field and data are the same (origin is 0)
-    assert quantity.data.shape == quantity.field.shape
+    assert quantity.shape == quantity.field.shape
 
     # Allows swap: new array is bigger than Q.shape
     new_array = np.ones((10,))
     new_array[:] = 2
-    quantity.data = new_array
+    quantity.swap_buffer(new_array)
 
     # After swap - field and data points to the same memory
     # BUT field still respects the original origin/extent
-    assert (quantity.data[:] == 2).all()
+    assert (quantity[:] == 2).all()
     assert (quantity.field[:] == 2).all()
-    assert quantity.data.shape != quantity.field.shape
+    assert quantity.shape != quantity.field.shape
     assert quantity.field.shape == (5,)
 
     # Expected fail: new array is too small
     new_array = np.ones((2,))
     with pytest.raises(ValueError, match="Quantity.data buffer swap failed.*"):
-        quantity.data = new_array
+        quantity.swap_buffer(new_array)
 
     # Expected fail: new array is not even an array
     with pytest.raises(TypeError, match="Quantity.data buffer swap failed.*"):
-        quantity.data = "meh"
-
-
-def test_constructor_with_gt4py_backend_is_deprecated() -> None:
-    nx = 5
-    shape = (nx,)
-    backend = "debug"
-    with pytest.deprecated_call(match="gt4py_backend is deprecated"):
-        quantity = Quantity(
-            data=np.empty(shape),
-            origin=(0,),
-            extent=(nx,),
-            dims=("dim_X",),
-            units="n/a",
-            gt4py_backend=backend,
-        )
-
-    # make sure we assign backend
-    assert quantity.backend == backend
-
-    # make sure we are backwards compatible (on the QuantityMetadata)
-    with pytest.deprecated_call(match="gt4py_backend is deprecated"):
-        assert quantity.gt4py_backend == backend
-
-
-def test_from_data_array_with_gt4py_backend_is_deprecated() -> None:
-    nx = 5
-    shape = (nx,)
-    backend = "debug"
-    with pytest.deprecated_call(match="gt4py_backend is deprecated"):
-        np_data = np.empty(shape)
-        data_array = xr.DataArray(data=np_data, attrs={"units": "n/a"})
-        quantity = Quantity.from_data_array(
-            data_array,
-            origin=(0,),
-            extent=(nx,),
-            number_of_halo_points=0,
-            gt4py_backend=backend,
-        )
-
-    # make sure we assign backend
-    assert quantity.backend == backend
-
-    # make sure we don't assign gt4py_backend anymore (on the QuantityMetadata)
-    with pytest.deprecated_call(match="gt4py_backend is deprecated"):
-        assert quantity.gt4py_backend == backend
-
-
-def test_assign_basic_data_is_deprecated() -> None:
-    nx = 5
-    backend = "debug"
-    with pytest.deprecated_call(
-        match="Usage of basic data in Quantities is deprecated"
-    ):
-        quantity = Quantity(
-            data=[0, 1, 2, 3, 4],
-            origin=(0,),
-            extent=(nx,),
-            dims=("dim_X",),
-            units="n/a",
-            backend=backend,
-            allow_mismatch_float_precision=True,
-        )
-
-    # make sure we can still use it (for now)
-    for i in range(5):
-        assert quantity.data[i] == i
-
-
-def test_constructor_backend_will_be_required() -> None:
-    nx = 5
-    shape = (nx,)
-    with pytest.deprecated_call(match="`backend` will be a required argument"):
-        local = Quantity(
-            data=np.empty(shape),
-            origin=(0,),
-            extent=(nx,),
-            dims=("dim_X",),
-            units="n/a",
-        )
+        quantity.swap_buffer("meh")

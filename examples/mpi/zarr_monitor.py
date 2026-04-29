@@ -1,4 +1,5 @@
 from datetime import timedelta
+from typing import Any
 
 import cftime
 import numpy as np
@@ -10,18 +11,21 @@ from ndsl import (
     QuantityFactory,
     SubtileGridSizer,
     TilePartitioner,
-    ZarrMonitor,
 )
-from ndsl.constants import X_DIM, Y_DIM, Z_DIM
+from ndsl.config import backend_python
+from ndsl.constants import I_DIM, J_DIM, K_DIM
+from ndsl.monitor import ZarrMonitor
 
 
 OUTPUT_PATH = "output/zarr_monitor.zarr"
 
 
-def get_example_state(time):
-    sizer = SubtileGridSizer(nx=48, ny=48, nz=70, n_halo=3, data_dimensions={})
-    allocator = QuantityFactory(sizer, np)
-    air_temperature = allocator.zeros([X_DIM, Y_DIM, Z_DIM], units="degK")
+def get_example_state(time: cftime.DatetimeJulian) -> dict[str, Any]:
+    sizer = SubtileGridSizer(
+        nx=48, ny=48, nz=70, n_halo=3, data_dimensions={}, backend=backend_python
+    )
+    allocator = QuantityFactory(sizer, backend=backend_python)
+    air_temperature = allocator.zeros([I_DIM, J_DIM, K_DIM], units="degK")
     air_temperature.view[:] = np.random.randn(*air_temperature.extent)
     return {"time": time, "air_temperature": air_temperature}
 

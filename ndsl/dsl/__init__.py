@@ -15,6 +15,8 @@ if gt4py_config_module in sys.modules:
         " before any `gt4py` imports."
     )
 
+# Literal precision handling
+
 
 def _get_literal_precision(default: Literal["32", "64"] = "64") -> Literal["32", "64"]:
     precision = os.getenv("NDSL_LITERAL_PRECISION", default)
@@ -44,3 +46,5 @@ if MPI is not None:
     gt4py.cartesian.config.cache_settings["dir_name"] = os.environ.get(
         "GT_CACHE_DIR_NAME", f".gt_cache_{MPI.COMM_WORLD.Get_rank():06}"
     )
+
+ndsl_log.info(f"Literal precision: {NDSL_GLOBAL_PRECISION}")

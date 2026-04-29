@@ -3,15 +3,16 @@ from __future__ import annotations
 import dataclasses
 import os
 import pathlib
+from typing import no_type_check
 
 import xarray as xr
 
 import ndsl.constants as constants
-from ndsl.constants import Z_DIM, Z_INTERFACE_DIM
+from ndsl.constants import K_DIM, K_INTERFACE_DIM
 
 # TODO: if we can remove translate tests in favor of checkpointer tests,
 # we can remove this "disallowed" import (ndsl.util does not depend on ndsl.dsl)
-from ndsl.dsl.gt4py_utils import is_gpu_backend, split_cartesian_into_storages
+from ndsl.dsl.gt4py_utils import split_cartesian_into_storages
 from ndsl.dsl.typing import Float
 from ndsl.grid.generation import MetricTerms
 from ndsl.initialization.allocator import QuantityFactory
@@ -164,8 +165,8 @@ class VerticalGridData:
                 but no fv_core.res.nc in restart data file."""
             )
 
-        ak = quantity_factory.zeros([Z_INTERFACE_DIM], units="Pa")
-        bk = quantity_factory.zeros([Z_INTERFACE_DIM], units="")
+        ak = quantity_factory.zeros([K_INTERFACE_DIM], units="Pa")
+        bk = quantity_factory.zeros([K_INTERFACE_DIM], units="")
         with open(ak_bk_data_file, "rb") as f:
             ds = xr.open_dataset(f).isel(Time=0).drop_vars("Time")
             ak.view[:] = ds["ak"].values
@@ -184,7 +185,7 @@ class VerticalGridData:
             p_interface_data = self.ak.view[:] + self.bk.view[:] * self.p_ref
             self._p_interface = Quantity(
                 p_interface_data,
-                dims=[Z_INTERFACE_DIM],
+                dims=[K_INTERFACE_DIM],
                 units="Pa",
                 backend=self.ak.backend,
                 number_of_halo_points=self.ak.metadata.n_halo,
@@ -201,7 +202,7 @@ class VerticalGridData:
             )
             self._p = Quantity(
                 p_data,
-                dims=[Z_DIM],
+                dims=[K_DIM],
                 units="Pa",
                 backend=self.p_interface.backend,
                 number_of_halo_points=self.p_interface.metadata.n_halo,
@@ -218,7 +219,7 @@ class VerticalGridData:
             )
             self._dp_ref = Quantity(
                 dp_ref_data,
-                dims=[Z_DIM],
+                dims=[K_DIM],
                 units="Pa",
                 backend=self.ak.backend,
                 number_of_halo_points=self.ak.metadata.n_halo,
@@ -230,10 +231,9 @@ class VerticalGridData:
         """Top of atmosphere pressure (Pa)"""
         if self.bk.view[0] != 0:
             raise ValueError("ptop is not well-defined when top-of-atmosphere bk != 0")
-        if self.ak.backend is not None and is_gpu_backend(self.ak.backend):
+        if self.ak.backend is not None and self.ak.backend.is_gpu_backend():
             return Float(self.ak.view[0].get())
-        else:
-            return Float(self.ak.view[0])
+        return Float(self.ak.view[0])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -389,7 +389,7 @@ class GridData:
     @staticmethod
     def _fC_from_lat(lat: Quantity) -> Quantity:
         np = lat.np
-        data = Float(2.0) * constants.OMEGA * np.sin(lat.data, dtype=Float)
+        data = Float(2.0) * constants.OMEGA * np.sin(lat[:], dtype=Float)
         return GridData._fC_from_data(data, lat)
 
     @property
@@ -762,6 +762,7 @@ class DriverGridData:
         )
 
     @classmethod
+    @no_type_check
     def new_from_grid_variables(
         cls,
         vlon: Quantity,
@@ -780,10 +781,10 @@ class DriverGridData:
             es1_1, es1_2, es1_3 = split_quantity_along_last_dim(es1)
             ew2_1, ew2_2, ew2_3 = split_quantity_along_last_dim(ew2)
         except (AttributeError, TypeError):
-            vlon1, vlon2, vlon3 = split_cartesian_into_storages(vlon)
-            vlat1, vlat2, vlat3 = split_cartesian_into_storages(vlat)
-            es1_1, es1_2, es1_3 = split_cartesian_into_storages(es1)
-            ew2_1, ew2_2, ew2_3 = split_cartesian_into_storages(ew2)
+            vlon1, vlon2, vlon3 = split_cartesian_into_storages(vlon[:])
+            vlat1, vlat2, vlat3 = split_cartesian_into_storages(vlat[:])
+            es1_1, es1_2, es1_3 = split_cartesian_into_storages(es1[:])
+            ew2_1, ew2_2, ew2_3 = split_cartesian_into_storages(ew2[:])
 
         return cls(
             vlon1=vlon1,
@@ -816,10 +817,10 @@ def split_quantity_along_last_dim(quantity: Quantity) -> list[Quantity]:
         list[Quantity]: List of quantities.
     """
     return_list: list[Quantity] = []
-    for i in range(quantity.data.shape[-1]):
+    for i in range(quantity.shape[-1]):
         return_list.append(
             Quantity(
-                data=quantity.data[..., i],
+                data=quantity[..., i],
                 dims=quantity.dims[:-1],
                 units=quantity.units,
                 origin=quantity.origin[:-1],

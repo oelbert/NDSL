@@ -16,16 +16,17 @@ def column_max(field, start_index, end_index):
 
         Returns: [max value, index of max value]
     """
-    max_index = 0
+    max_index = start_index
+    max_value = field.at(K=max_index)
     level = start_index
     while level <= end_index:
-        new = field.at(K=level)
-        old = field.at(K=max_index)
-        if new > old:
+        value = field.at(K=level)
+        if value > max_value:
+            max_value = value
             max_index = level
         level += 1
 
-    return field.at(K=max_index), max_index
+    return max_value, max_index
 
 
 @typing.no_type_check
@@ -41,16 +42,17 @@ def column_max_ddim(field, ddim, start_index, end_index):
 
         Returns: [max value, index of max value]
     """
-    max_index = 0
+    max_index = start_index
+    max_value = field.at(K=max_index, ddim=[ddim])
     level = start_index
     while level <= end_index:
-        new = field.at(K=level, ddim=[ddim])
-        old = field.at(K=max_index, ddim=[ddim])
-        if new > old:
+        value = field.at(K=level, ddim=[ddim])
+        if value > max_value:
+            max_value = value
             max_index = level
         level += 1
 
-    return field.at(K=max_index, ddim=[ddim]), max_index
+    return max_value, max_index
 
 
 @typing.no_type_check
@@ -66,16 +68,17 @@ def column_min(field, start_index, end_index):
 
         Returns: [min value, index of min value]
     """
-    min_index = 0
+    min_index = start_index
+    min_value = field.at(K=min_index)
     level = start_index
     while level <= end_index:
-        new = field.at(K=level)
-        old = field.at(K=min_index)
-        if new < old:
+        value = field.at(K=level)
+        if value < min_value:
+            min_value = value
             min_index = level
         level += 1
 
-    return field.at(K=min_index), min_index
+    return min_value, min_index
 
 
 @typing.no_type_check
@@ -91,13 +94,14 @@ def column_min_ddim(field, ddim, start_index, end_index):
 
         Returns: [min value, index of min value]
     """
-    min_index = 0
+    min_index = start_index
+    min_value = field.at(K=min_index, ddim=[ddim])
     level = start_index
     while level <= end_index:
-        new = field.at(K=level, ddim=[ddim])
-        old = field.at(K=min_index, ddim=[ddim])
-        if new < old:
+        value = field.at(K=level, ddim=[ddim])
+        if value < min_value:
+            min_value = value
             min_index = level
         level += 1
 
-    return field.at(K=min_index, ddim=[ddim]), min_index
+    return min_value, min_index

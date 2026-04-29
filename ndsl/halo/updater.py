@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -14,7 +15,7 @@ from ndsl.halo.data_transformer import HaloDataTransformer, HaloExchangeSpec
 from ndsl.halo.rotate import rotate_scalar_data
 from ndsl.performance.timer import NullTimer, Timer
 from ndsl.quantity import Quantity, QuantityHaloSpec
-from ndsl.types import AsyncRequest, NumpyModule
+from ndsl.types import AsyncRequest
 from ndsl.utils import device_synchronize
 
 
@@ -95,7 +96,7 @@ class HaloUpdater:
     def from_scalar_specifications(
         cls,
         comm: Communicator,
-        numpy_like_module: NumpyModule,
+        numpy_like_module: ModuleType,
         specifications: Iterable[QuantityHaloSpec],
         boundaries: Iterable[Boundary],
         tag: int,
@@ -147,7 +148,7 @@ class HaloUpdater:
     def from_vector_specifications(
         cls,
         comm: Communicator,
-        numpy_like_module: NumpyModule,
+        numpy_like_module: ModuleType,
         specifications_x: Iterable[QuantityHaloSpec],
         specifications_y: Iterable[QuantityHaloSpec],
         boundaries: Iterable[Boundary],
@@ -291,8 +292,11 @@ class HaloUpdater:
         # to proper quantities
         with self._timer.clock("unpack"):
             for buffer in self._transformers.values():
+                if self._inflight_x_quantities is None:
+                    raise RuntimeError("Coding error, no quantities in flights")
                 buffer.async_unpack(
-                    self._inflight_x_quantities, self._inflight_y_quantities  # type: ignore[arg-type]
+                    self._inflight_x_quantities,
+                    self._inflight_y_quantities,
                 )
             if self._finalize_on_wait:
                 for transformer in self._transformers.values():
@@ -347,13 +351,13 @@ class HaloUpdateRequest:
 
 def on_c_grid(x_quantity: Quantity, y_quantity: Quantity) -> bool:
     if (
-        constants.X_DIM not in x_quantity.dims
-        or constants.Y_INTERFACE_DIM not in x_quantity.dims
+        constants.I_DIM not in x_quantity.dims
+        or constants.J_INTERFACE_DIM not in x_quantity.dims
     ):
         return False
     if (
-        constants.Y_DIM not in y_quantity.dims
-        or constants.X_INTERFACE_DIM not in y_quantity.dims
+        constants.J_DIM not in y_quantity.dims
+        or constants.I_INTERFACE_DIM not in y_quantity.dims
     ):
         return False
     else:
@@ -371,8 +375,8 @@ class VectorInterfaceHaloUpdater:
         """Initialize a CubedSphereCommunicator.
 
         Args:
-            comm: mpi4py.Comm object
-            partitioner: cubed sphere partitioner
+            comm: ndsl.Comm object
+            boundaries: ?
             force_cpu: Force all communication to go through central memory. Optional.
             timer: Time communication operations. Optional.
         """
@@ -426,15 +430,15 @@ class VectorInterfaceHaloUpdater:
         west_boundary = self.boundaries[constants.WEST]
         south_data = x_quantity.view.southwest.sel(
             **{  # type: ignore[arg-type]
-                constants.Y_INTERFACE_DIM: 0,
-                constants.X_DIM: slice(
-                    0, x_quantity.extent[x_quantity.dims.index(constants.X_DIM)]
+                constants.J_INTERFACE_DIM: 0,
+                constants.I_DIM: slice(
+                    0, x_quantity.extent[x_quantity.dims.index(constants.I_DIM)]
                 ),
             }
         )
         south_data = rotate_scalar_data(
             south_data,
-            [constants.X_DIM],
+            [constants.I_DIM],
             x_quantity.np,
             -south_boundary.n_clockwise_rotations,
         )
@@ -442,15 +446,15 @@ class VectorInterfaceHaloUpdater:
             south_data = -south_data
         west_data = y_quantity.view.southwest.sel(
             **{  # type: ignore[arg-type]
-                constants.X_INTERFACE_DIM: 0,
-                constants.Y_DIM: slice(
-                    0, y_quantity.extent[y_quantity.dims.index(constants.Y_DIM)]
+                constants.I_INTERFACE_DIM: 0,
+                constants.J_DIM: slice(
+                    0, y_quantity.extent[y_quantity.dims.index(constants.J_DIM)]
                 ),
             }
         )
         west_data = rotate_scalar_data(
             west_data,
-            [constants.Y_DIM],
+            [constants.J_DIM],
             y_quantity.np,
             -west_boundary.n_clockwise_rotations,
         )
@@ -472,7 +476,7 @@ class VectorInterfaceHaloUpdater:
         ]
         return send_requests
 
-    def _maybe_force_cpu(self, module: NumpyModule) -> NumpyModule:
+    def _maybe_force_cpu(self, module: ModuleType) -> ModuleType:
         """
         Get a numpy-like module depending on configuration and
         Quantity original allocator.
@@ -488,17 +492,17 @@ class VectorInterfaceHaloUpdater:
         east_rank = self.boundaries[constants.EAST].to_rank
         north_data = x_quantity.view.northwest.sel(
             **{  # type: ignore[arg-type]
-                constants.Y_INTERFACE_DIM: -1,
-                constants.X_DIM: slice(
-                    0, x_quantity.extent[x_quantity.dims.index(constants.X_DIM)]
+                constants.J_INTERFACE_DIM: -1,
+                constants.I_DIM: slice(
+                    0, x_quantity.extent[x_quantity.dims.index(constants.I_DIM)]
                 ),
             }
         )
         east_data = y_quantity.view.southeast.sel(
             **{  # type: ignore[arg-type]
-                constants.X_INTERFACE_DIM: -1,
-                constants.Y_DIM: slice(
-                    0, y_quantity.extent[y_quantity.dims.index(constants.Y_DIM)]
+                constants.I_INTERFACE_DIM: -1,
+                constants.J_DIM: slice(
+                    0, y_quantity.extent[y_quantity.dims.index(constants.J_DIM)]
                 ),
             }
         )

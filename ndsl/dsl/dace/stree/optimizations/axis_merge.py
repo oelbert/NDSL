@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import copy
-import re
-from typing import Any
 
 import dace
-import dace.sdfg.analysis.schedule_tree.treenodes as stree
 from dace.properties import CodeBlock
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
-from ndsl import ndsl_log
 from ndsl.dsl.dace.stree.optimizations.memlet_helpers import (
     AxisIterator,
     no_data_dependencies_on_cartesian_axis,
@@ -18,45 +15,45 @@ from ndsl.dsl.dace.stree.optimizations.tree_common_op import (
     list_index,
     swap_node_position_in_tree,
 )
+from ndsl.logging import ndsl_log
 
 
 # Buggy passes that should work
-PUSH_IFSCOPE_DOWNWARD = False
+PUSH_IFSCOPE_DOWNWARD = False  # Crashing the overall stree - bad algorithmics
 
 
-def _is_axis_map(node: stree.MapScope, axis: AxisIterator) -> bool:
+def _is_axis_map(node: tn.MapScope, axis: AxisIterator) -> bool:
     """Returns true if node is a map over the given axis."""
-    map_parameter = node.node.params
+    map_parameter = node.node.map.params
     return len(map_parameter) == 1 and map_parameter[0].startswith(axis.as_str())
 
 
+def _is_axis_for(node: tn.ForScope, axis: AxisIterator) -> bool:
+    return node.loop.loop_variable.startswith(axis.as_str())
+
+
 def _both_same_single_axis_maps(
-    first: stree.MapScope,
-    second: stree.MapScope,
-    axis: AxisIterator,
+    first: tn.MapScope, second: tn.MapScope, axis: AxisIterator
 ) -> bool:
     return (
-        (len(first.node.params) == 1 and len(second.node.params) == 1)  # Single axis
-        and first.node.params[0] == second.node.params[0]  # Same axis
-        and _is_axis_map(first, axis)  # Correct axis
+        (
+            len(first.node.map.params) == 1 and len(second.node.map.params) == 1
+        )  # Single axis
+        and _is_axis_map(first, axis)  # Correct axis in first map
+        and _is_axis_map(second, axis)  # Correct axis in second map
     )
 
 
 def _can_merge_axis_maps(
-    first: stree.MapScope,
-    second: stree.MapScope,
-    axis: AxisIterator,
+    first: tn.MapScope, second: tn.MapScope, axis: AxisIterator
 ) -> bool:
-    return _both_same_single_axis_maps(
-        first, second, axis
-    ) and no_data_dependencies_on_cartesian_axis(
-        first,
-        second,
-        axis,
-    )
+    if _both_same_single_axis_maps(first, second, axis):
+        if no_data_dependencies_on_cartesian_axis(first, second, axis):
+            return True
+    return False
 
 
-class InsertOvercomputationGuard(stree.ScheduleNodeTransformer):
+class InsertOvercomputationGuard(tn.ScheduleNodeTransformer):
     def __init__(
         self,
         axis_as_string: str,
@@ -81,17 +78,21 @@ class InsertOvercomputationGuard(stree.ScheduleNodeTransformer):
             f"and ({self._axis_as_string} - {start}) % {step} == 0"
         )
 
-    def visit_MapScope(self, node: stree.MapScope) -> stree.MapScope:
+    def visit_MapScope(self, node: tn.MapScope) -> tn.MapScope:
         all_children_are_maps = all(
-            [isinstance(child, stree.MapScope) for child in node.children]
+            [isinstance(child, tn.MapScope) for child in node.children]
         )
         if not all_children_are_maps:
             if self._merged_range != self._original_range:
-                node.children = [
-                    stree.IfScope(
-                        condition=self._execution_condition(), children=node.children
-                    )
-                ]
+                if_scope = tn.IfScope(
+                    condition=self._execution_condition(),
+                    children=node.children,
+                    parent=node,
+                )
+                # Re-parent to IF
+                for child in node.children:
+                    child.parent = if_scope
+                node.children = [if_scope]
             return node
 
         node.children = self.visit(node.children)
@@ -99,88 +100,74 @@ class InsertOvercomputationGuard(stree.ScheduleNodeTransformer):
 
 
 def _get_next_node(
-    nodes: list[stree.ScheduleTreeNode],
-    node: stree.ScheduleTreeNode,
-) -> stree.ScheduleTreeNode:
+    nodes: list[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode
+) -> tn.ScheduleTreeNode:
     return nodes[list_index(nodes, node) + 1]
 
 
-def _last_node(
-    nodes: list[stree.ScheduleTreeNode], node: stree.ScheduleTreeNode
-) -> bool:
+def _last_node(nodes: list[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode) -> bool:
     return list_index(nodes, node) >= len(nodes) - 1
 
 
-def _sanitize_axis(axis: AxisIterator, name_to_normalize: str) -> str:
-    axis_clean = f"{axis.as_str()}"
-    pattern = f"{axis.as_str()}_[0-9]*"
-
-    return re.sub(pattern, axis_clean, name_to_normalize)
-
-
-class NormalizeAxisSymbol(stree.ScheduleNodeVisitor):
+class ReplaceAxisSymbol(tn.ScheduleNodeVisitor):
     def __init__(self, axis: AxisIterator) -> None:
-        self.axis = axis
+        self._axis = axis
 
     def visit_MapScope(
         self,
-        map_scope: stree.MapScope,
+        map_scope: tn.MapScope,
         axis_replacements: dict[str, str] | None = None,
-        **kwargs: Any,
     ) -> None:
         if axis_replacements is None:
             axis_replacements = {}
+
         for index, param in enumerate(map_scope.node.params):
-            sanitized_param = _sanitize_axis(self.axis, param)
-            axis_replacements[param] = sanitized_param
-            map_scope.node.params[index] = sanitized_param
+            if param in axis_replacements:
+                map_scope.node.params[index] = axis_replacements[param]
 
         # visit children
         for child in map_scope.children:
-            self.visit(child, axis_rpl_dict=axis_replacements)
+            self.visit(child, axis_replacements=axis_replacements)
 
     def visit_TaskletNode(
         self,
-        node: stree.TaskletNode,
+        node: tn.TaskletNode,
         axis_replacements: dict[str, str] | None = None,
-        **kwargs: Any,
     ) -> None:
-        if axis_replacements is None:
-            axis_replacements = {}
+        if not axis_replacements:
+            # Noop if there are no replacements to do.
+            return
+
         for memlets in node.in_memlets.values():
             memlets.replace(axis_replacements)
         for memlets in node.out_memlets.values():
             memlets.replace(axis_replacements)
 
 
-class CartesianAxisMerge(stree.ScheduleNodeTransformer):
+class CartesianAxisMerge(tn.ScheduleNodeTransformer):
     """Merge a cartesian axis if they are contiguous in code-flow.
 
     Can do:
         - merge a given axis with the next maps at the same recursion level
         - can overcompute (eager) to allow for more merging at the cost of an if
 
+    It expects:
+        - All Maps and ForLoop are on a single axis - but doesn't check for it.
+
     Args:
         axis: AxisIterator to be merged
         eager: overcompute with a conditional guard
     """
 
-    def __init__(
-        self,
-        axis: AxisIterator,
-        *,
-        eager: bool = True,
-    ) -> None:
+    def __init__(self, axis: AxisIterator, *, eager: bool = True) -> None:
         self.axis = axis
         self.eager = eager
 
     def __str__(self) -> str:
-        return f"CartesianAxisMerge_{self.axis.name}"
+        return f"CartesianAxisMerge_{self.axis.name}_{'eager' if self.eager else ''}"
 
     def _merge_node(
-        self,
-        node: stree.ScheduleTreeNode,
-        nodes: list[stree.ScheduleTreeNode],
+        self, node: tn.ScheduleTreeNode, nodes: list[tn.ScheduleTreeNode]
     ) -> int:
         """Direct code to the correct resolver for the node (e.g. visitor)
 
@@ -189,34 +176,51 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
             behavior (e.g. IfScope before ControlFlowScope)
         """
 
-        if isinstance(node, stree.MapScope):
+        if isinstance(node, tn.MapScope):
             return self._map_overcompute_merge(node, nodes)
-        elif PUSH_IFSCOPE_DOWNWARD and isinstance(node, stree.IfScope):
+
+        if PUSH_IFSCOPE_DOWNWARD and isinstance(node, tn.IfScope):
             return self._push_ifelse_down(node, nodes)
-        elif isinstance(node, stree.TaskletNode):
+
+        if isinstance(node, tn.ForScope):
+            return self._for_merge(node)
+
+        if isinstance(node, tn.TaskletNode):
             return self._push_tasklet_down(node, nodes)
-        elif isinstance(node, stree.ControlFlowScope):
-            return self._default_control_flow(node, nodes)
-        else:
-            ndsl_log.debug(
-                f"  (╯°□°)╯︵ ┻━┻: can't merge {type(node)}. Recursion ends."
-            )
+
+        if isinstance(node, tn.ControlFlowScope):
+            return self._default_control_flow(node)
+
+        ndsl_log.debug(f"  (╯°□°)╯︵ ┻━┻: can't merge {type(node)}. Recursion ends.")
         return 0
 
-    def _default_control_flow(
-        self,
-        the_control_flow: stree.ControlFlowScope,
-        nodes: list[stree.ScheduleTreeNode],
-    ) -> int:
+    def _for_merge(self, the_for_scope: tn.ForScope) -> int:
+        merged = 0
+
+        if _is_axis_for(the_for_scope, self.axis):
+            # TODO: if the for scope is on a cartesian axis it can be
+            # merged with other for scope going in the same direction
+            pass
+        else:
+            # Non-cartesian for - can be pushed down if everything merged below
+            if (
+                len(the_for_scope.children) == 1
+                and isinstance(the_for_scope.children[0], tn.MapScope)
+                and _is_axis_map(the_for_scope.children[0], self.axis)
+            ):
+                swap_node_position_in_tree(the_for_scope, the_for_scope.children[0])
+                merged += 1
+
+        return merged + self._default_control_flow(the_for_scope)
+
+    def _default_control_flow(self, the_control_flow: tn.ControlFlowScope) -> int:
         if len(the_control_flow.children) != 0:
             return self._merge(the_control_flow)
 
         return 0
 
     def _push_tasklet_down(
-        self,
-        the_tasklet: stree.TaskletNode,
-        nodes: list[stree.ScheduleTreeNode],
+        self, the_tasklet: tn.TaskletNode, nodes: list[tn.ScheduleTreeNode]
     ) -> int:
         """Push tasklet into a consecutive map."""
         in_memlets = the_tasklet.input_memlets()
@@ -236,7 +240,7 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
 
         # Attempt to push the tasklet in the next map
         next_node = nodes[next_index + 1]
-        if isinstance(next_node, stree.MapScope):
+        if isinstance(next_node, tn.MapScope):
             next_node.children.insert(0, the_tasklet)
             the_tasklet.parent = next_node
             nodes.remove(the_tasklet)
@@ -245,9 +249,7 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
         return merged
 
     def _push_ifelse_down(
-        self,
-        the_if: stree.IfScope,
-        nodes: list[stree.ScheduleTreeNode],
+        self, the_if: tn.IfScope, nodes: list[tn.ScheduleTreeNode]
     ) -> int:
         merged = 0
 
@@ -258,8 +260,8 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
         for else_index in range(if_index + 1, len(nodes)):
             else_node = nodes[else_index]
             if else_index < len(nodes) and (
-                isinstance(else_node, stree.ElseScope)
-                or isinstance(else_node, stree.ElifScope)
+                isinstance(else_node, tn.ElseScope)
+                or isinstance(else_node, tn.ElifScope)
             ):
                 merged += self._merge_node(else_node, else_node.children)
             else:
@@ -269,17 +271,17 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
 
         # Gather all first maps - if they do not exists, get out
         all_maps = []
-        if isinstance(the_if.children[0], stree.MapScope):
+        if isinstance(the_if.children[0], tn.MapScope):
             all_maps.append(the_if.children[0])
         else:
             return merged
         for else_index in range(if_index + 1, len(nodes)):
             else_node = nodes[else_index]
             if else_index < len(nodes) and (
-                isinstance(else_node, stree.ElseScope)
-                or isinstance(else_node, stree.ElifScope)
+                isinstance(else_node, tn.ElseScope)
+                or isinstance(else_node, tn.ElifScope)
             ):
-                if isinstance(else_node.children[0], stree.MapScope):
+                if isinstance(else_node.children[0], tn.MapScope):
                     all_maps.append(else_node.children[0])
                 else:
                     return merged
@@ -304,8 +306,8 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
         # Swap ELIF/ELSE & maps
         for else_index in range(if_index + 1, len(nodes)):
             if else_index < len(nodes) and (
-                isinstance(nodes[else_index], stree.ElseScope)
-                or isinstance(nodes[else_index], stree.ElifScope)
+                isinstance(nodes[else_index], tn.ElseScope)
+                or isinstance(nodes[else_index], tn.ElifScope)
             ):
                 swap_node_position_in_tree(
                     nodes[else_index], nodes[else_index].children[0]
@@ -314,15 +316,13 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
                 break
 
         # Merge the Maps
-        assert isinstance(nodes[if_index], stree.MapScope)
+        assert isinstance(nodes[if_index], tn.MapScope)
         merged += self._map_overcompute_merge(nodes[if_index], nodes)
 
         return merged
 
     def _map_overcompute_merge(
-        self,
-        the_map: stree.MapScope,
-        nodes: list[stree.ScheduleTreeNode],
+        self, the_map: tn.MapScope, nodes: list[tn.ScheduleTreeNode]
     ) -> int:
         # End of nodes OR
         # Not the right axis
@@ -336,7 +336,7 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
         next_node = _get_next_node(nodes, the_map)
 
         # Next node is not a MapScope - no merge
-        if not isinstance(next_node, stree.MapScope):
+        if not isinstance(next_node, tn.MapScope):
             return 0
 
         # Attempt to merge consecutive maps
@@ -368,22 +368,36 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
             merged_range=merged_range,
             original_range=second_range,
         ).visit(next_node)
-        merged_children: list[stree.MapScope] = [
+        merged_children: list[tn.MapScope] = [
             *first_map.children,
             *second_map.children,
         ]
         first_map.children = merged_children
 
+        # Reparent children
+        for child in merged_children:
+            child.parent = first_map
+
         # TODO also merge containers and symbols (if applicable)
         first_map.node.map.range = merged_range
+
+        # K-maps use unique iterators (i.e. every k-map iterates over `k__[0-9]*`).
+        # After merge, we need to replace the axis symbols of the second map's children
+        # with the axis symbol of the first map.
+        if next_node.node.map.params[0] != the_map.node.map.params[0]:
+            replacements = {next_node.node.map.params[0]: the_map.node.map.params[0]}
+            ReplaceAxisSymbol(self.axis).visit(
+                first_map, axis_replacements=replacements
+            )
 
         # delete now-merged second_map
         del nodes[list_index(nodes, next_node)]
 
         return 1
 
-    def _merge(self, node: stree.ScheduleTreeRoot | stree.ScheduleTreeScope) -> int:
+    def _merge(self, node: tn.ScheduleTreeScope) -> int:
         merged = 0
+        tn.validate_children_and_parents_align(node)
 
         if __debug__:
             detect_cycle(node.children, set())
@@ -392,6 +406,7 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
         while i_candidate < len(node.children):
             next_node = node.children[i_candidate]
             merged += self._merge_node(next_node, node.children)
+            tn.validate_children_and_parents_align(node)
             i_candidate += 1
 
         if __debug__:
@@ -399,7 +414,7 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
 
         return merged
 
-    def visit_ScheduleTreeRoot(self, node: stree.ScheduleTreeRoot) -> None:
+    def visit_ScheduleTreeRoot(self, node: tn.ScheduleTreeRoot) -> None:
         """Merge as many maps as possible.
 
         The algorithm works as follows:
@@ -409,26 +424,23 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
             - If NO merges - restore the previous children
             (undo potential changes that didn't lead to map merge)
             Then exit.
+
+
+        ToDo:
+            - ForLoop are not merge at the moment, only Maps.
+            - Non-cartesian ForLoop should be merged down _if_ the maps below
+            are unique (e.g. if everything has been merged). This is relevant for
+            linear solvers and other iteration-dependent algorithmics
+            - The K loops have varied indices name of the form _k_x[_y]. This overcomplicates
+            merging and we don't take care of it at the moment. We could write a pass cleaning
+            those first.
         """
-
-        # TODO: many interval generate many iterator name right now
-        #    e.g. _k_0, _k_1...
-        # This makes merging more difficult. We could write a pre-pass
-        # that cleans this up BUT we have an issue with the THIS_K feature
-        # in the tasklet...
-        # NormalizeAxisSymbol(self.axis).visit(node)
-
-        # TODO: we are meging single axis, we could prefix those runs by moving
-        #       if scope down inside the map if it has the proper axis, preparing
-        #       for a better merging scope. If we can't nerge, we can revert this
-        #       orep step
-
+        tn.validate_children_and_parents_align(node)
         overall_merged = 0
         passes_apply = 0
         i = 0
         while True:
             i += 1
-            # ndsl_log.debug(f"🔥 Merge attempt #{i}")
             previous_children = copy.deepcopy(node.children)
             try:
                 merged = self._merge(node)
@@ -441,11 +453,15 @@ class CartesianAxisMerge(stree.ScheduleNodeTransformer):
             # If we didn't merge, we revert the children
             # to the previous state
             if merged == 0:
-                # ndsl_log.debug("🥹 No merges, revert!")
                 node.children = previous_children
+                for child in node.children:
+                    child.parent = node
                 break
             passes_apply += 1
 
+        tn.validate_has_no_other_node_types(node)
+        tn.validate_children_and_parents_align(node)
+
         ndsl_log.debug(
-            f"🚀 Cartesian Axis Merge ({self.axis.name}): {overall_merged} map merged in {passes_apply} passes"
+            f"🚀 {self}: {overall_merged} maps merged in {passes_apply} passes"
         )

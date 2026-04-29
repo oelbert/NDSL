@@ -7,8 +7,15 @@ import pytest
 from ndsl import HaloExchangeSpec, Quantity
 from ndsl.buffer import Buffer
 from ndsl.comm import _boundary_utils
+from ndsl.config import Backend
 from ndsl.constants import (
     EAST,
+    I_DIM,
+    I_INTERFACE_DIM,
+    J_DIM,
+    J_INTERFACE_DIM,
+    K_DIM,
+    K_INTERFACE_DIM,
     NORTH,
     NORTHEAST,
     NORTHWEST,
@@ -16,12 +23,6 @@ from ndsl.constants import (
     SOUTHEAST,
     SOUTHWEST,
     WEST,
-    X_DIM,
-    X_INTERFACE_DIM,
-    Y_DIM,
-    Y_INTERFACE_DIM,
-    Z_DIM,
-    Z_INTERFACE_DIM,
 )
 from ndsl.halo import HaloDataTransformer
 from ndsl.halo.rotate import rotate_scalar_data, rotate_vector_data
@@ -72,12 +73,12 @@ def n_halos(request):
 def origin(n_halos, dims, n_buffer):
     return_list = []
     origin_dict = {
-        X_DIM: n_halos + n_buffer,
-        X_INTERFACE_DIM: n_halos + n_buffer,
-        Y_DIM: n_halos + n_buffer,
-        Y_INTERFACE_DIM: n_halos + n_buffer,
-        Z_DIM: n_buffer,
-        Z_INTERFACE_DIM: n_buffer,
+        I_DIM: n_halos + n_buffer,
+        I_INTERFACE_DIM: n_halos + n_buffer,
+        J_DIM: n_halos + n_buffer,
+        J_INTERFACE_DIM: n_halos + n_buffer,
+        K_DIM: n_buffer,
+        K_INTERFACE_DIM: n_buffer,
     }
     for dim in dims:
         return_list.append(origin_dict[dim])
@@ -86,37 +87,28 @@ def origin(n_halos, dims, n_buffer):
 
 @pytest.fixture(
     params=[
-        pytest.param((Y_DIM, X_DIM), id="center"),
-        pytest.param((Z_DIM, Y_DIM, X_DIM), id="center_3d"),
+        pytest.param((J_DIM, I_DIM), id="center"),
+        pytest.param((K_DIM, J_DIM, I_DIM), id="center_3d"),
         pytest.param(
-            (X_DIM, Y_DIM, Z_DIM),
+            (I_DIM, J_DIM, K_DIM),
             id="center_3d_reverse",
         ),
         pytest.param(
-            (X_DIM, Z_DIM, Y_DIM),
+            (I_DIM, K_DIM, J_DIM),
             id="center_3d_shuffle",
         ),
-        pytest.param((Y_INTERFACE_DIM, X_INTERFACE_DIM), id="interface"),
+        pytest.param((J_INTERFACE_DIM, I_INTERFACE_DIM), id="interface"),
         pytest.param(
             (
-                Z_INTERFACE_DIM,
-                Y_INTERFACE_DIM,
-                X_INTERFACE_DIM,
+                K_INTERFACE_DIM,
+                J_INTERFACE_DIM,
+                I_INTERFACE_DIM,
             ),
             id="interface_3d",
         ),
     ]
 )
-def dims(request, fast):
-    if fast and request.param in (
-        (X_DIM, Y_DIM, Z_DIM),
-        (
-            Z_INTERFACE_DIM,
-            Y_INTERFACE_DIM,
-            X_INTERFACE_DIM,
-        ),
-    ):
-        pytest.skip("running in fast mode")
+def dims(request):
     return request.param
 
 
@@ -124,12 +116,12 @@ def dims(request, fast):
 def shape(nz, ny, nx, dims, n_halos, n_buffer):
     return_list = []
     length_dict = {
-        X_DIM: 2 * n_halos + nx + n_buffer,
-        X_INTERFACE_DIM: 2 * n_halos + nx + 1 + n_buffer,
-        Y_DIM: 2 * n_halos + ny + n_buffer,
-        Y_INTERFACE_DIM: 2 * n_halos + ny + 1 + n_buffer,
-        Z_DIM: nz + n_buffer,
-        Z_INTERFACE_DIM: nz + 1 + n_buffer,
+        I_DIM: 2 * n_halos + nx + n_buffer,
+        I_INTERFACE_DIM: 2 * n_halos + nx + 1 + n_buffer,
+        J_DIM: 2 * n_halos + ny + n_buffer,
+        J_INTERFACE_DIM: 2 * n_halos + ny + 1 + n_buffer,
+        K_DIM: nz + n_buffer,
+        K_INTERFACE_DIM: nz + 1 + n_buffer,
     }
     for dim in dims:
         return_list.append(length_dict[dim])
@@ -140,12 +132,12 @@ def shape(nz, ny, nx, dims, n_halos, n_buffer):
 def extent(n_points, dims, nz, ny, nx):
     return_list = []
     extent_dict = {
-        X_DIM: nx,
-        X_INTERFACE_DIM: nx + 1,
-        Y_DIM: ny,
-        Y_INTERFACE_DIM: ny + 1,
-        Z_DIM: nz,
-        Z_INTERFACE_DIM: nz + 1,
+        I_DIM: nx,
+        I_INTERFACE_DIM: nx + 1,
+        J_DIM: ny,
+        J_INTERFACE_DIM: ny + 1,
+        K_DIM: nz,
+        K_INTERFACE_DIM: nz + 1,
     }
     for dim in dims:
         return_list.append(extent_dict[dim])
@@ -161,21 +153,19 @@ def _shape_length(shape: Tuple[int]) -> int:
 
 
 @pytest.fixture
-def quantity(dims, units, origin, extent, shape, dtype, gt4py_backend):
+def quantity(dims, units, origin, extent, shape, dtype, ndsl_backend: Backend):
     """A list of quantities whose values are 42.42 in the computational domain and 1
     outside of it."""
     sz = _shape_length(shape)
     data = np.arange(0, sz, dtype=dtype).reshape(shape)
-    if "gtc" not in gt4py_backend:
-        # should also test code if gt4py_backend is unset
-        gt4py_backend = None
+
     return Quantity(
         data,
         dims=dims,
         units=units,
         origin=origin,
         extent=extent,
-        backend=gt4py_backend,
+        backend=ndsl_backend,
     )
 
 
@@ -189,7 +179,7 @@ def test_data_transformer_allocate(quantity, n_halos):
         quantity.dims,
         quantity.origin,
         quantity.extent,
-        quantity.data.shape,
+        quantity.shape,
         NORTH,
         n_halos,
         interior=False,
@@ -198,7 +188,7 @@ def test_data_transformer_allocate(quantity, n_halos):
         quantity.dims,
         quantity.origin,
         quantity.extent,
-        quantity.data.shape,
+        quantity.shape,
         SOUTHWEST,
         n_halos,
         interior=False,
@@ -206,9 +196,9 @@ def test_data_transformer_allocate(quantity, n_halos):
 
     specification = QuantityHaloSpec(
         n_points=n_halos,
-        shape=quantity.data.shape,
-        strides=quantity.data.strides,
-        itemsize=quantity.data.itemsize,
+        shape=quantity.shape,
+        strides=quantity._data.strides,
+        itemsize=quantity._data.itemsize,
         origin=quantity.metadata.origin,
         extent=quantity.metadata.extent,
         dims=quantity.metadata.dims,
@@ -226,12 +216,12 @@ def test_data_transformer_allocate(quantity, n_halos):
     assert len(data_transformer.get_pack_buffer().array.shape) == 1
     assert (
         data_transformer.get_pack_buffer().array.size
-        == quantity.data[boundary_north].size + quantity.data[boundary_southwest].size
+        == quantity[boundary_north].size + quantity[boundary_southwest].size
     )
     assert len(data_transformer.get_unpack_buffer().array.shape) == 1
     assert (
         data_transformer.get_unpack_buffer().array.size
-        == quantity.data[boundary_north].size + quantity.data[boundary_southwest].size
+        == quantity[boundary_north].size + quantity[boundary_southwest].size
     )
     # clean up
     Buffer.push_to_cache(data_transformer._pack_buffer)
@@ -255,7 +245,7 @@ def _get_boundaries(quantity, n_halos):
             quantity.dims,
             quantity.origin,
             quantity.extent,
-            quantity.data.shape,
+            quantity.shape,
             direction,
             n_halos,
             interior=True,
@@ -264,7 +254,7 @@ def _get_boundaries(quantity, n_halos):
             quantity.dims,
             quantity.origin,
             quantity.extent,
-            quantity.data.shape,
+            quantity.shape,
             direction,
             n_halos,
             interior=False,
@@ -294,9 +284,9 @@ def test_data_transformer_scalar_pack_unpack(quantity, rotation, n_halos):
 
     specification = QuantityHaloSpec(
         n_points=n_halos,
-        shape=quantity.data.shape,
-        strides=quantity.data.strides,
-        itemsize=quantity.data.itemsize,
+        shape=quantity.shape,
+        strides=quantity._data.strides,
+        itemsize=quantity._data.itemsize,
         origin=quantity.metadata.origin,
         extent=quantity.metadata.extent,
         dims=quantity.metadata.dims,
@@ -333,21 +323,21 @@ def test_data_transformer_scalar_pack_unpack(quantity, rotation, n_halos):
     # according to the rotation & slice and insert them back
     # this reproduces the multi-buffer strategy
     rotated = rotate_scalar_data(
-        quantity.data[N_edge_boundaries[rotation][0]],
+        quantity[N_edge_boundaries[rotation][0]],
         quantity.dims,
         quantity.metadata.np,
         -rotation,
     )
-    target_quantity.data[N_edge_boundaries[rotation][1]] = rotated
+    target_quantity[N_edge_boundaries[rotation][1]] = rotated
     rotated = rotate_scalar_data(
-        quantity.data[NE_corner_boundaries[rotation][0]],
+        quantity[NE_corner_boundaries[rotation][0]],
         quantity.dims,
         quantity.metadata.np,
         -rotation,
     )
-    target_quantity.data[NE_corner_boundaries[rotation][1]] = rotated
+    target_quantity[NE_corner_boundaries[rotation][1]] = rotated
 
-    assert (target_quantity.data == quantity.data).all()
+    assert (target_quantity[:] == quantity[:]).all()
 
 
 def test_data_transformer_vector_pack_unpack(quantity, rotation, n_halos):
@@ -374,9 +364,9 @@ def test_data_transformer_vector_pack_unpack(quantity, rotation, n_halos):
 
     specification_x = QuantityHaloSpec(
         n_points=n_halos,
-        shape=x_quantity.data.shape,
-        strides=x_quantity.data.strides,
-        itemsize=x_quantity.data.itemsize,
+        shape=x_quantity.shape,
+        strides=x_quantity._data.strides,
+        itemsize=x_quantity._data.itemsize,
         origin=x_quantity.metadata.origin,
         extent=x_quantity.metadata.extent,
         dims=x_quantity.metadata.dims,
@@ -385,9 +375,9 @@ def test_data_transformer_vector_pack_unpack(quantity, rotation, n_halos):
     )
     specification_y = QuantityHaloSpec(
         n_points=n_halos,
-        shape=y_quantity.data.shape,
-        strides=y_quantity.data.strides,
-        itemsize=y_quantity.data.itemsize,
+        shape=y_quantity.shape,
+        strides=y_quantity._data.strides,
+        itemsize=y_quantity._data.itemsize,
         origin=y_quantity.metadata.origin,
         extent=y_quantity.metadata.extent,
         dims=y_quantity.metadata.dims,
@@ -442,23 +432,23 @@ def test_data_transformer_vector_pack_unpack(quantity, rotation, n_halos):
     # according to the rotation & slice and insert them bak
     # this reproduce the multi-buffer strategy
     rotated_x, rotated_y = rotate_vector_data(
-        quantity.data[N_edge_boundaries[rotation][0]],
-        quantity.data[N_edge_boundaries[rotation][0]],
+        quantity[N_edge_boundaries[rotation][0]],
+        quantity[N_edge_boundaries[rotation][0]],
         -rotation,
         quantity.dims,
         quantity.metadata.np,
     )
-    target_quantity_x.data[N_edge_boundaries[rotation][1]] = rotated_x
-    target_quantity_y.data[N_edge_boundaries[rotation][1]] = rotated_y
+    target_quantity_x[N_edge_boundaries[rotation][1]] = rotated_x
+    target_quantity_y[N_edge_boundaries[rotation][1]] = rotated_y
     rotated_x, rotated_y = rotate_vector_data(
-        quantity.data[NE_corner_boundaries[rotation][0]],
-        quantity.data[NE_corner_boundaries[rotation][0]],
+        quantity[NE_corner_boundaries[rotation][0]],
+        quantity[NE_corner_boundaries[rotation][0]],
         -rotation,
         quantity.dims,
         quantity.metadata.np,
     )
-    target_quantity_x.data[NE_corner_boundaries[rotation][1]] = rotated_x
-    target_quantity_y.data[NE_corner_boundaries[rotation][1]] = rotated_y
+    target_quantity_x[NE_corner_boundaries[rotation][1]] = rotated_x
+    target_quantity_y[NE_corner_boundaries[rotation][1]] = rotated_y
 
-    assert (target_quantity_x.data == x_quantity.data).all()
-    assert (target_quantity_y.data == y_quantity.data).all()
+    assert (target_quantity_x[:] == x_quantity[:]).all()
+    assert (target_quantity_y[:] == y_quantity[:]).all()
